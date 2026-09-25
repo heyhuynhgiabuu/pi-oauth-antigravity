@@ -640,7 +640,6 @@ test("403 VALIDATION_REQUIRED surfaces Google's verification link instead of use
 	const validation = extractAccountValidation(VALIDATION_REQUIRED_BODY);
 	assert.equal(validation?.message, "Verify your account to continue.");
 	assert.match(validation?.url ?? "", /^https:\/\/accounts\.google\.com\/signin\/continue\?/);
-	assert.equal(validation?.learnMoreUrl, "https://support.google.com/accounts?p=al_alert");
 
 	const message = friendlyAntigravityError(403, VALIDATION_REQUIRED_BODY);
 	// The whole point: the user gets a link they can act on.
@@ -652,17 +651,20 @@ test("403 VALIDATION_REQUIRED surfaces Google's verification link instead of use
 	// The URL must survive redaction intact or it is useless to click.
 	assert.match(message, /plt=AKgnsbuZNC0cynwEO0jeMIHLqFoLPHO9kak443jZfkB8I8S3oGpK6w1Y1-5ykSBoq3HrOag/);
 	assert.doesNotMatch(message, /Next: re-login or try another model/);
+	// Only the verification link is actionable; the body also carries a learn-more
+	// support link, and rendering it would send the user to a help page instead of the fix.
+	assert.doesNotMatch(message, /support\.google\.com/);
 });
 
 test("403 validation links are only rendered from Google-owned https hosts", () => {
-	const withUrl = (validationUrl: string, learnMoreUrl = "https://support.google.com/accounts?p=al_alert") =>
+	const withUrl = (validationUrl: string) =>
 		JSON.stringify({
 			error: {
 				message: "Verify your account to continue.",
 				details: [
 					{
 						reason: "VALIDATION_REQUIRED",
-						metadata: { validation_url: validationUrl, validation_learn_more_url: learnMoreUrl },
+						metadata: { validation_url: validationUrl },
 					},
 				],
 			},
@@ -675,10 +677,11 @@ test("403 validation links are only rendered from Google-owned https hosts", () 
 	assert.equal(extractAccountValidation(withUrl("https://accounts.google.com.evil.test/verify"))?.url, undefined);
 	assert.equal(extractAccountValidation(withUrl("not a url"))?.url, undefined);
 
-	// With the primary link dropped, fall back to the learn-more link instead of going silent.
+	// A rejected link degrades to the plain instruction and renders no URL at all.
 	const fallback = friendlyAntigravityError(403, withUrl("https://evil.example/verify"));
 	assert.doesNotMatch(fallback, /evil\.example/);
-	assert.match(fallback, /https:\/\/support\.google\.com\/accounts\?p=al_alert/);
+	assert.doesNotMatch(fallback, /https:\/\//);
+	assert.match(fallback, /complete Google account verification/);
 });
 
 test("403 keeps generic handling when the block is not an account validation", () => {

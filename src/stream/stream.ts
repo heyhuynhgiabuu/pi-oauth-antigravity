@@ -610,7 +610,6 @@ export function mapStopReason(reason: string | undefined): StopReason {
 export interface AccountValidation {
   message: string;
   url?: string;
-  learnMoreUrl?: string;
 }
 
 /**
@@ -660,7 +659,6 @@ export function extractAccountValidation(text: string): AccountValidation | unde
     return {
       message: redactSecrets(message).trim().slice(0, 200),
       url: safeValidationUrl(metadata.validation_url),
-      learnMoreUrl: safeValidationUrl(metadata.validation_learn_more_url),
     };
   }
   return undefined;
@@ -669,9 +667,7 @@ export function extractAccountValidation(text: string): AccountValidation | unde
 function formatAccountValidation(validation: AccountValidation): string {
   const next = validation.url
     ? `complete verification at ${validation.url}`
-    : validation.learnMoreUrl
-      ? `see what Google requires at ${validation.learnMoreUrl}, then complete verification`
-      : "complete Google account verification";
+    : "complete Google account verification";
   return (
     "Antigravity denied this account pending Google account verification (VALIDATION_REQUIRED). " +
     `Re-login and switching models will not clear it. Next: ${next}, ` +
