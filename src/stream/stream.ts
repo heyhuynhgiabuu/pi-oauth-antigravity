@@ -69,6 +69,7 @@ import {
 import {
   antigravityEnv,
   antigravityRequestEnvelope,
+  asString,
   deriveAntigravitySessionId,
   getOrCreateAntigravitySession,
   isRecord,
@@ -600,6 +601,85 @@ export function mapStopReason(reason: string | undefined): StopReason {
   return reason ? StopReason.Error : StopReason.Stop;
 }
 
+/**
+ * Google blocks an entire account — not one model — with 403 VALIDATION_REQUIRED until
+ * the account owner completes identity/phone verification. Neither re-login nor a model
+ * switch clears it, so the actionable `validation_url` in the error details has to reach
+ * the user instead of the generic "re-login or try another model" advice.
+ */
+export interface AccountValidation {
+  message: string;
+  url?: string;
+  learnMoreUrl?: string;
+}
+
+/**
+ * The URL is printed for the user to click, so only Google-owned https hosts are
+ * allowed. A response body is untrusted input just like any other; a foreign host here
+ * would be a ready-made phishing link.
+ */
+function safeValidationUrl(raw: unknown): string | undefined {
+  const trimmed = asString(raw)?.trim();
+  if (!trimmed) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:") return undefined;
+  const host = url.hostname.toLowerCase();
+  const googleOwned =
+    host === "google.com" ||
+    host.endsWith(".google.com") ||
+    host === "googleapis.com" ||
+    host.endsWith(".googleapis.com");
+  if (!googleOwned) return undefined;
+  // Return the backend's exact string (not url.toString()) so Google's params survive
+  // verbatim; redactSecrets is the belt-and-braces check that no token rode along.
+  return redactSecrets(trimmed);
+}
+
+/** Exported for unit tests. */
+export function extractAccountValidation(text: string): AccountValidation | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const error = isRecord(parsed) ? parsed.error : undefined;
+  if (!isRecord(error) || !Array.isArray(error.details)) return undefined;
+  for (const detail of error.details) {
+    if (!isRecord(detail) || detail.reason !== "VALIDATION_REQUIRED") continue;
+    const metadata = isRecord(detail.metadata) ? detail.metadata : {};
+    // Both candidates are response-body fields, so both are redacted like the rest of
+    // the backend text that reaches the user; neither can smuggle a token out.
+    const message =
+      asString(metadata.validation_error_message) ?? asString(error.message) ?? "";
+    return {
+      message: redactSecrets(message).trim().slice(0, 200),
+      url: safeValidationUrl(metadata.validation_url),
+      learnMoreUrl: safeValidationUrl(metadata.validation_learn_more_url),
+    };
+  }
+  return undefined;
+}
+
+function formatAccountValidation(validation: AccountValidation): string {
+  const next = validation.url
+    ? `complete verification at ${validation.url}`
+    : validation.learnMoreUrl
+      ? `see what Google requires at ${validation.learnMoreUrl}, then complete verification`
+      : "complete Google account verification";
+  return (
+    "Antigravity denied this account pending Google account verification (VALIDATION_REQUIRED). " +
+    `Re-login and switching models will not clear it. Next: ${next}, ` +
+    "or /login antigravity with another personal Google account." +
+    (validation.message ? ` Backend said: ${validation.message}` : "")
+  );
+}
+
 /** Exported for unit tests. */
 export function friendlyAntigravityError(status: number | undefined, text: string): string {
   const full = redactSecrets(jsonOrTextError(text));
@@ -620,6 +700,14 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
     return "Antigravity authentication failed. Next: run /login antigravity, then retry.";
   }
   if (status === 403) {
+    // Account-level eligibility block. Checked before the generic permission test
+    // because a body can carry both signals and only this one is user-fixable.
+    const validation = extractAccountValidation(text);
+    if (validation) return formatAccountValidation(validation);
+    // Fallback for gateways that strip `details` but keep the message.
+    if (/verify your account|VALIDATION_REQUIRED/i.test(msg)) {
+      return formatAccountValidation({ message: msg });
+    }
     if (/permission|forbidden|access/i.test(msg)) {
       return "Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.";
     }

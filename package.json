@@ -1,6 +1,6 @@
 {
   "name": "@heyhuynhgiabuu/pi-oauth-antigravity",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Google Antigravity OAuth provider extension for Pi with Gemini 3.8, prompt cache session affinity, and trajectory chaining.",
   "type": "module",
   "main": "dist/index.js",

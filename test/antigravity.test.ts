@@ -16,6 +16,7 @@ import {
 	convertMessages,
 	convertTools,
 	friendlyAntigravityError,
+	extractAccountValidation,
 	isPlanQuotaError,
 	mapStopReason,
 	streamAntigravity,
@@ -609,6 +610,91 @@ test("friendly errors are actionable and redacted", () => {
 	assert.match(friendlyAntigravityError(429, "Individual quota reached. Resets in 23m."), /23m/);
 	assert.match(friendlyAntigravityError(404, "Requested entity was not found"), /switch to/);
 	assert.match(friendlyAntigravityError(503, "No capacity available"), /capacity/);
+});
+
+/** Real 403 body captured from cloudcode-pa when the account is unverified. */
+const VALIDATION_REQUIRED_BODY = JSON.stringify({
+	error: {
+		code: 403,
+		message: "Verify your account to continue.",
+		status: "PERMISSION_DENIED",
+		details: [
+			{
+				"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+				reason: "VALIDATION_REQUIRED",
+				domain: "cloudcode-pa.googleapis.com",
+				metadata: {
+					validation_url_link_text: "Verify your account",
+					validation_url:
+						"https://accounts.google.com/signin/continue?sarp=1&scc=1&continue=https://developers.google.com/gemini-code-assist/auth/auth_success_gemini&plt=AKgnsbuZNC0cynwEO0jeMIHLqFoLPHO9kak443jZfkB8I8S3oGpK6w1Y1-5ykSBoq3HrOagIjz251AgtW-KB3SaXyBgiMGV6d0YdGkEqny9aPjFnzFTt8NPw-d_e-MA8gXiDphzKDiJr&flowName=GlifWebSignIn&authuser",
+					validation_learn_more_link_text: "Learn more",
+					validation_learn_more_url: "https://support.google.com/accounts?p=al_alert",
+					validation_error_message: "Verify your account to continue.",
+				},
+			},
+		],
+	},
+});
+
+test("403 VALIDATION_REQUIRED surfaces Google's verification link instead of useless advice", () => {
+	const validation = extractAccountValidation(VALIDATION_REQUIRED_BODY);
+	assert.equal(validation?.message, "Verify your account to continue.");
+	assert.match(validation?.url ?? "", /^https:\/\/accounts\.google\.com\/signin\/continue\?/);
+	assert.equal(validation?.learnMoreUrl, "https://support.google.com/accounts?p=al_alert");
+
+	const message = friendlyAntigravityError(403, VALIDATION_REQUIRED_BODY);
+	// The whole point: the user gets a link they can act on.
+	assert.match(message, /complete verification at https:\/\/accounts\.google\.com\/signin\/continue\?/);
+	assert.match(message, /VALIDATION_REQUIRED/);
+	assert.match(message, /another personal Google account/);
+	// And is told the generic advice does not apply, so they stop re-logging in.
+	assert.match(message, /Re-login and switching models will not clear it/);
+	// The URL must survive redaction intact or it is useless to click.
+	assert.match(message, /plt=AKgnsbuZNC0cynwEO0jeMIHLqFoLPHO9kak443jZfkB8I8S3oGpK6w1Y1-5ykSBoq3HrOag/);
+	assert.doesNotMatch(message, /Next: re-login or try another model/);
+});
+
+test("403 validation links are only rendered from Google-owned https hosts", () => {
+	const withUrl = (validationUrl: string, learnMoreUrl = "https://support.google.com/accounts?p=al_alert") =>
+		JSON.stringify({
+			error: {
+				message: "Verify your account to continue.",
+				details: [
+					{
+						reason: "VALIDATION_REQUIRED",
+						metadata: { validation_url: validationUrl, validation_learn_more_url: learnMoreUrl },
+					},
+				],
+			},
+		});
+
+	// A response body is untrusted: a foreign host would be a ready-made phishing link.
+	assert.equal(extractAccountValidation(withUrl("https://evil.example/verify"))?.url, undefined);
+	assert.equal(extractAccountValidation(withUrl("javascript:alert(1)"))?.url, undefined);
+	assert.equal(extractAccountValidation(withUrl("http://accounts.google.com/verify"))?.url, undefined);
+	assert.equal(extractAccountValidation(withUrl("https://accounts.google.com.evil.test/verify"))?.url, undefined);
+	assert.equal(extractAccountValidation(withUrl("not a url"))?.url, undefined);
+
+	// With the primary link dropped, fall back to the learn-more link instead of going silent.
+	const fallback = friendlyAntigravityError(403, withUrl("https://evil.example/verify"));
+	assert.doesNotMatch(fallback, /evil\.example/);
+	assert.match(fallback, /https:\/\/support\.google\.com\/accounts\?p=al_alert/);
+});
+
+test("403 keeps generic handling when the block is not an account validation", () => {
+	assert.equal(extractAccountValidation("permission denied"), undefined);
+	assert.equal(extractAccountValidation('{"error":{"message":"nope"}}'), undefined);
+	// A permission body with no validation details must keep the pre-existing advice.
+	const denied = friendlyAntigravityError(403, "permission denied for this project");
+	assert.match(denied, /access was denied for this account or project/);
+	// Details stripped by a gateway: still actionable, just without the link.
+	const stripped = friendlyAntigravityError(
+		403,
+		JSON.stringify({ error: { message: "Verify your account to continue." } }),
+	);
+	assert.match(stripped, /VALIDATION_REQUIRED/);
+	assert.doesNotMatch(stripped, /https:\/\//);
+	assert.match(stripped, /complete Google account verification/);
 });
 
 test("429 mapping separates plan quota from transient throttles", () => {
