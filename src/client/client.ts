@@ -225,9 +225,6 @@ function buildModelMatchRegex(requestedId: string): RegExp {
   //   gemini-3.6-flash-low       → "Gemini 3.6 Flash (Low)"
   //   gemini-3.6-flash-medium    → "Gemini 3.6 Flash (Medium)"
   //   gemini-3.6-flash-high      → "Gemini 3.6 Flash (High)"
-  //   gemini-3.5-flash-extra-low → "Gemini 3.5 Flash (Low)"
-  //   gemini-3.5-flash-low       → "Gemini 3.5 Flash (Medium)"
-  //   gemini-3-flash-agent       → "Gemini 3.5 Flash (High)"
   if (req === "gemini-3.8-flash-low") return /gemini[- ]3\.8[- ]flash \(low\)/i;
   if (req === "gemini-3.8-flash-medium") return /gemini[- ]3\.8[- ]flash \(medium\)/i;
   if (req === "gemini-3.8-flash-high") return /gemini[- ]3\.8[- ]flash \(high\)/i;
@@ -237,11 +234,6 @@ function buildModelMatchRegex(requestedId: string): RegExp {
   if (req === "gemini-3.6-flash-low") return /gemini[- ]3\.6[- ]flash \(low\)/i;
   if (req === "gemini-3.6-flash-medium") return /gemini[- ]3\.6[- ]flash \(medium\)/i;
   if (req === "gemini-3.6-flash-high") return /gemini[- ]3\.6[- ]flash \(high\)/i;
-  if (req === "gemini-3.5-flash-extra-low") return /gemini[- ]3\.5[- ]flash \(low\)/i;
-  if (req === "gemini-3.5-flash-low" || req === "gemini-3.5-flash-medium")
-    return /gemini[- ]3\.5[- ]flash \(medium\)/i;
-  if (req === "gemini-3.5-flash-high" || req === "gemini-3-flash-agent")
-    return /gemini[- ]3\.5[- ]flash \(high\)/i;
   if (req.includes("claude-opus-4-6")) return /claude.*opus.*4\.6/i;
   if (req.includes("claude-sonnet-4-6")) return /claude.*sonnet.*4\.6/i;
   if (req.includes("gpt-oss-120b")) return /gpt.*oss.*120b/i;

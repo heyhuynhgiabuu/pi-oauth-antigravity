@@ -12,14 +12,15 @@ export const PROVIDER_NAME = "Antigravity";
  * - Gemini 3.8 Flash (Low / Medium / High)
  * - Gemini 3.7 Flash (Low / Medium / High)
  * - Gemini 3.6 Flash (Low / Medium / High)
- * - Gemini 3.5 Flash (Low / Medium / High)
  * - Gemini 3.1 Pro (Low / High)
  * - Claude Sonnet 4.6 (Thinking)
  * - Claude Opus 4.6 (Thinking)
  * - GPT-OSS 120B (Medium)
  *
- * Pi exposes those as public model IDs and only surfaces the exact thinking levels
- * advertised by the backend for each model.
+ * Gemini 3.5 Flash is intentionally omitted from the selectable catalog; the
+ * stream handler recognizes the reported retirement notice for old model IDs.
+ * Pi exposes the remaining models as public IDs and surfaces the exact thinking
+ * levels advertised by the backend for each model.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
   "gemini-3.8-flash": {
@@ -90,17 +91,6 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
     },
     defaultRequestId: "gemini-3.6-flash-low",
   },
-  "gemini-3.5-flash": {
-    off: "gemini-3.5-flash-extra-low",
-    routing: {
-      minimal: "gemini-3.5-flash-extra-low",
-      low: "gemini-3.5-flash-extra-low",
-      medium: "gemini-3.5-flash-low",
-      high: "gemini-3-flash-agent",
-      xhigh: "gemini-3-flash-agent",
-    },
-    defaultRequestId: "gemini-3.5-flash-extra-low",
-  },
   "gpt-oss-120b": {
     off: "gpt-oss-120b-medium",
     routing: {
@@ -133,10 +123,6 @@ export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "gemini-3.6-flash-low": 65536,
   "gemini-3.6-flash-medium": 65536,
   "gemini-3.6-flash-high": 65536,
-  "gemini-3.5-flash": 65536,
-  "gemini-3.5-flash-extra-low": 65536,
-  "gemini-3.5-flash-low": 65536,
-  "gemini-3-flash-agent": 65536,
   "gemini-3.1-pro": 65535,
   "gemini-3.1-pro-low": 65535,
   "gemini-3.1-pro-high": 65535,
@@ -275,16 +261,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     maxTokens: 65535,
   },
   {
-    id: "gemini-3.5-flash",
-    name: "Gemini 3.5 Flash (Antigravity)",
-    reasoning: true,
-    thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
-    input: ["text", "image"],
-    cost: geminiFlashCost,
-    contextWindow: 1048576,
-    maxTokens: 65536,
-  },
-  {
     id: "gpt-oss-120b",
     name: "GPT-OSS 120B (Antigravity)",
     reasoning: true,
@@ -363,9 +339,6 @@ export type ThinkingWire = {
 };
 
 export const ANTIGRAVITY_MODEL_ENUM: Record<string, string> = {
-  "gemini-3.5-flash-extra-low": "MODEL_PLACEHOLDER_M187",
-  "gemini-3.5-flash-low": "MODEL_PLACEHOLDER_M20",
-  "gemini-3-flash-agent": "MODEL_PLACEHOLDER_M132",
   "gemini-3.1-pro-low": "MODEL_PLACEHOLDER_M36",
   "gemini-pro-agent": "MODEL_PLACEHOLDER_M16",
 };
@@ -386,12 +359,6 @@ export function getThinkingConfig(
     modelId === "gemini-3.8-flash"
   ) {
     return { includeThoughts: true, thinkingLevel: googleLevel(effort) };
-  }
-  if (modelId === "gemini-3.5-flash") {
-    if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
-    const thinkingBudget =
-      effort === "high" || effort === "xhigh" ? 10_000 : effort === "medium" ? 4_000 : 1_000;
-    return { includeThoughts: true, thinkingBudget };
   }
   if (modelId === "gemini-3.1-pro") {
     if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };

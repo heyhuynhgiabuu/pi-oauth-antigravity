@@ -10,8 +10,11 @@ import {
   type Tool,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "@earendil-works/pi-ai/api/constrained-sampling";
-import { requiresToolCallId } from "@earendil-works/pi-ai/api/google-shared";
+import {
+  getJsonSchemaToolParameters,
+  requiresToolCallId,
+  resolveJsonSchemaStrictSampling,
+} from "./provider-helpers.js";
 import { getCurrentSystemPrompt, getCurrentTools } from "./transcript.js";
 import {
   antigravityHeaders,
@@ -601,6 +604,20 @@ export function mapStopReason(reason: string | undefined): StopReason {
   return reason ? StopReason.Error : StopReason.Stop;
 }
 
+const RETIRED_GEMINI_35_NOTICE_PREFIX =
+  "gemini 3.5 flash is no longer available. please switch to";
+
+function isRetiredGemini35Runtime(runtimeModel: string): boolean {
+  return /^(?:gemini-3\.5-flash(?:-|$)|gemini-3-flash-agent$)/i.test(runtimeModel);
+}
+
+function retiredNoticePrefixState(text: string): "possible" | "match" | "no-match" {
+  const normalized = text.trimStart().replace(/\s+/g, " ").toLowerCase();
+  if (normalized.startsWith(RETIRED_GEMINI_35_NOTICE_PREFIX)) return "match";
+  if (RETIRED_GEMINI_35_NOTICE_PREFIX.startsWith(normalized)) return "possible";
+  return "no-match";
+}
+
 /**
  * Google blocks an entire account — not one model — with 403 VALIDATION_REQUIRED until
  * the account owner completes identity/phone verification. Neither re-login nor a model
@@ -711,7 +728,7 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
   }
   if (status === 404) {
     if (/Requested entity was not found/i.test(msg)) {
-      return "This model is not available right now. Next: switch to gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, or another working model.";
+      return "This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.1-pro, or another working model.";
     }
     return `Antigravity could not find the requested resource. Next: retry or switch models. Backend said: ${msg}`;
   }
@@ -778,6 +795,7 @@ export async function streamResponse(
   output: AssistantMessage,
   model?: Model<Api>,
   sessionState?: AntigravitySessionState,
+  detectRetiredGemini35 = false,
 ): Promise<boolean> {
   if (!response.body) throw new Error("No response body");
   const reader = response.body.getReader();
@@ -790,6 +808,15 @@ export async function streamResponse(
   let currentBlock: ActiveBlock | null = null;
   let hasContent = false;
   let lastResponseId: string | undefined;
+  type PendingRetiredNoticePart = {
+    type: "text" | "thinking";
+    text: string;
+    thoughtSignature: string | undefined;
+  };
+  type RetiredNoticeCheck = { text: string; parts: PendingRetiredNoticePart[] };
+  let retiredNoticeCheck: RetiredNoticeCheck | undefined = detectRetiredGemini35
+    ? { text: "", parts: [] }
+    : undefined;
   const blocks = output.content;
   const blockIndex = () => blocks.length - 1;
 
@@ -818,6 +845,56 @@ export async function streamResponse(
       });
     }
     currentBlock = null;
+  };
+
+  const appendText = (text: string, thoughtSignature?: string) => {
+    if (!currentBlock || currentBlock.type !== "text") {
+      finishCurrent();
+      currentBlock = { type: "text", text: "" };
+      blocks.push(currentBlock);
+      ensureStarted();
+      stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+    }
+    if (currentBlock.type === "text") {
+      currentBlock.text += text;
+      if (thoughtSignature) currentBlock.textSignature = thoughtSignature;
+      stream.push({
+        type: "text_delta",
+        contentIndex: blockIndex(),
+        delta: text,
+        partial: output,
+      });
+    }
+  };
+
+  const appendThinking = (text: string, thoughtSignature?: string) => {
+    if (!currentBlock || currentBlock.type !== "thinking") {
+      finishCurrent();
+      currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
+      blocks.push(currentBlock);
+      ensureStarted();
+      stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+    }
+    if (currentBlock.type === "thinking") {
+      currentBlock.thinking += text;
+      if (thoughtSignature) currentBlock.thinkingSignature = thoughtSignature;
+      stream.push({
+        type: "thinking_delta",
+        contentIndex: blockIndex(),
+        delta: text,
+        partial: output,
+      });
+    }
+  };
+
+  const flushPendingRetiredNoticeParts = () => {
+    if (!retiredNoticeCheck?.parts.length) return;
+    const pendingParts = retiredNoticeCheck.parts;
+    retiredNoticeCheck = undefined;
+    for (const part of pendingParts) {
+      if (part.type === "thinking") appendThinking(part.text, part.thoughtSignature);
+      else appendText(part.text, part.thoughtSignature);
+    }
   };
 
   while (true) {
@@ -852,43 +929,48 @@ export async function streamResponse(
         if (part.text !== undefined) {
           hasContent = true;
           const isThinking = part.thought === true;
-          const type = isThinking ? "thinking" : "text";
-          if (!currentBlock || currentBlock.type !== type) {
-            finishCurrent();
-            currentBlock = isThinking
-              ? { type: "thinking", thinking: "", thinkingSignature: undefined }
-              : { type: "text", text: "" };
-            blocks.push(currentBlock);
-            ensureStarted();
-            stream.push({
-              type: isThinking ? "thinking_start" : "text_start",
-              contentIndex: blockIndex(),
-              partial: output,
+          const noticeCheck = retiredNoticeCheck;
+          if (
+            !isThinking &&
+            noticeCheck &&
+            (part.text.length > 0 || noticeCheck.parts.length > 0)
+          ) {
+            noticeCheck.parts.push({
+              type: "text",
+              text: part.text,
+              thoughtSignature: part.thoughtSignature,
             });
-          }
-          if (isThinking && currentBlock.type === "thinking") {
-            currentBlock.thinking += part.text;
-            if (part.thoughtSignature) currentBlock.thinkingSignature = part.thoughtSignature;
-            stream.push({
-              type: "thinking_delta",
-              contentIndex: blockIndex(),
-              delta: part.text,
-              partial: output,
+            noticeCheck.text += part.text;
+            const noticeState = retiredNoticePrefixState(noticeCheck.text);
+            if (noticeState === "match") {
+              try {
+                await reader.cancel();
+              } catch {
+                // The response is being discarded; cancellation is best-effort.
+              }
+              reader.releaseLock();
+              throw new Error(
+                "Antigravity reports that Gemini 3.5 Flash is no longer available. " +
+                  "Next: switch to gemini-3.8-flash, gemini-3.7-flash, or another catalog model.",
+              );
+            }
+            if (noticeState !== "possible") flushPendingRetiredNoticeParts();
+          } else if (isThinking && noticeCheck?.parts.length) {
+            noticeCheck.parts.push({
+              type: "thinking",
+              text: part.text,
+              thoughtSignature: part.thoughtSignature,
             });
-          } else if (!isThinking && currentBlock.type === "text") {
-            currentBlock.text += part.text;
-            if (part.thoughtSignature) currentBlock.textSignature = part.thoughtSignature;
-            stream.push({
-              type: "text_delta",
-              contentIndex: blockIndex(),
-              delta: part.text,
-              partial: output,
-            });
+          } else if (isThinking) {
+            appendThinking(part.text, part.thoughtSignature);
+          } else {
+            appendText(part.text, part.thoughtSignature);
           }
         }
 
         if (part.functionCall) {
           hasContent = true;
+          flushPendingRetiredNoticeParts();
           finishCurrent();
           const rawId = part.functionCall.id || "";
           const toolCall: ToolCall = {
@@ -950,6 +1032,7 @@ export async function streamResponse(
     }
   }
 
+  flushPendingRetiredNoticeParts();
   finishCurrent();
   if (sessionState && lastResponseId) {
     sessionState.lastExecutionId = lastResponseId;
@@ -1142,7 +1225,14 @@ export function streamAntigravity(
         };
         output.stopReason = "stop";
 
-        received = await streamResponse(response, stream, output, model, sessionState);
+        received = await streamResponse(
+          response,
+          stream,
+          output,
+          model,
+          sessionState,
+          isRetiredGemini35Runtime(runtimeModel),
+        );
         if (received) break;
       }
 

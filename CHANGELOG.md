@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Kept the provider loadable in packaged Pi runtimes by moving pi-ai subpath helpers into a local module, matched to the resolved pi-ai 0.86.0 implementation.
+- Excluded Gemini 3.5 Flash from the selectable catalog and added a pre-stream guard for the reported retirement notice so it is not emitted as assistant text.
+- Defaulted image generation to `gemini-3.1-flash-image` while retaining older image models as explicit fallbacks.
+- Made image path assertions portable across Windows and POSIX systems.
+
 ## [0.1.5] - 2026-09-26
 
 ### Fixed
