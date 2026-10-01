@@ -1,5 +1,6 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -55,12 +56,18 @@ import {
 	assertSafeAspectRatio,
 	assertSafeImageModel,
 	DEFAULT_IMAGE_MODEL,
+	generateAntigravityImage,
 	parseImageCommandArgs,
 	resolveImageSavePath,
 } from "../src/image/image.js";
 import { getCurrentSystemPrompt, getCurrentTools } from "../src/stream/transcript.js";
 import { createAssistantMessageEventStream, isRetryableAssistantError, normalizeContext, Type } from "@earendil-works/pi-ai";
-import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Message, Model, Tool } from "@earendil-works/pi-ai";
+
+const testTempDir = mkdtempSync(join(tmpdir(), "pi-oauth-antigravity-test-"));
+const testSessionFile = join(testTempDir, "antigravity-sessions.json");
+process.env.ANTIGRAVITY_SESSIONS_FILE = testSessionFile;
+after(() => rmSync(testTempDir, { recursive: true, force: true }));
 
 function fakeModel(id: string): Model<Api> {
 	return {
@@ -108,15 +115,15 @@ async function withEnvAsync(
 
 /** Stub global fetch and record every request URL. */
 async function withFetchStub(
-	respond: (url: string, call: number) => Response,
+	respond: (url: string, call: number, init?: RequestInit) => Response,
 	fn: (calls: string[]) => Promise<void>,
 ): Promise<void> {
 	const original = globalThis.fetch;
 	const calls: string[] = [];
-	globalThis.fetch = (async (input: string | URL | Request) => {
+	globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 		calls.push(url);
-		return respond(url, calls.length);
+		return respond(url, calls.length, init);
 	}) as typeof fetch;
 	try {
 		await fn(calls);
@@ -127,6 +134,48 @@ async function withFetchStub(
 
 const STREAM_OK_SSE =
 	'data: {"response":{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}}\n\n';
+
+function streamResponseOutput(): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: ANTIGRAVITY_API,
+		provider: PROVIDER_ID,
+		model: "gemini-3.5-flash",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as AssistantMessage;
+}
+
+function retirementSse(parts: unknown[], finishReason?: string): string {
+	const candidate: Record<string, unknown> = { content: { parts } };
+	if (finishReason) candidate.finishReason = finishReason;
+	return `data: ${JSON.stringify({ response: { candidates: [candidate] } })}\n\n`;
+}
+
+function openRetirementNoticeResponse(onCancel: () => void): Response {
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(
+				new TextEncoder().encode(
+					retirementSse([{ text: "Gemini 3.5 Flash is no longer available. Please switch to" }]),
+				),
+			);
+		},
+		cancel() {
+			onCancel();
+		},
+	});
+	return new Response(body);
+}
 
 function errorResponse(status: number, message: string): Response {
 	return new Response(JSON.stringify({ error: { code: status, message } }), {
@@ -244,8 +293,8 @@ test("effort routing maps public ids to backend runtime ids", () => {
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "medium"), "gemini-3.8-flash-medium");
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "high"), "gemini-3.8-flash-high");
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "xhigh"), "gemini-3.8-flash-high");
-	// gemini-3.5-flash was retired by the backend; as an unmapped id it must pass through untouched.
 	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "off"), "gemini-3.5-flash");
+	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "high"), "gemini-3.5-flash");
 	assert.equal(getAntigravityRequestModelId("gemini-3.1-pro", "high"), "gemini-pro-agent");
 	assert.equal(getAntigravityRequestModelId("claude-sonnet-4-6", "high"), "claude-sonnet-4-6");
 	assert.equal(getAntigravityRequestModelId("unknown-model", "high"), "unknown-model");
@@ -526,6 +575,35 @@ test("convertTools applies Pi 0.86 preferred strict schemas for Gemini 3", () =>
 	assert.deepEqual(schema.properties.offset.anyOf, [{ type: "number" }, { type: "null" }]);
 });
 
+test("convertTools strict schema edge cases match pi-ai 0.86", () => {
+	const makeTool = (property: unknown, strict: "prefer" | "require" = "prefer") =>
+		[
+			{
+				name: "schema",
+				description: "schema test",
+				parameters: { type: "object", properties: { value: property } },
+				constrainedSampling: { type: "json_schema", strict },
+			},
+		] as never[];
+
+	assert.throws(
+		() => convertTools(makeTool({ type: "array", items: [{ type: "string" }] }, "require"), false, true),
+		/tuple schemas are unsupported/,
+	);
+	assert.throws(
+		() => convertTools(makeTool(false, "require"), false, true),
+		/boolean schemas are unsupported/,
+	);
+
+	for (const property of [{ enum: ["value", null] }, { const: null }]) {
+		const out = convertTools(makeTool(property), false, true);
+		const schema = out?.[0]?.functionDeclarations[0]?.parametersJsonSchema as {
+			properties: { value: Record<string, unknown> };
+		};
+		assert.deepEqual(schema.properties.value, property);
+	}
+});
+
 test("convertTools leaves preferred schemas unchanged when strict sampling is unsupported", () => {
 	const tools = [
 		{
@@ -608,7 +686,9 @@ test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", () 
 test("friendly errors are actionable and redacted", () => {
 	assert.match(friendlyAntigravityError(401, "unauthorized"), /\/login antigravity/);
 	assert.match(friendlyAntigravityError(429, "Individual quota reached. Resets in 23m."), /23m/);
-	assert.match(friendlyAntigravityError(404, "Requested entity was not found"), /switch to/);
+	const unavailableModel = friendlyAntigravityError(404, "Requested entity was not found");
+	assert.match(unavailableModel, /switch to gemini-3\.8-flash/i);
+	assert.doesNotMatch(unavailableModel, /gemini-3\.5-flash/i);
 	assert.match(friendlyAntigravityError(503, "No capacity available"), /capacity/);
 });
 
@@ -845,6 +925,255 @@ test("5xx still falls back to the next endpoint", async () => {
 			},
 		);
 	});
+});
+
+test("retired Gemini 3.5 SSE notice fails without emitting it as assistant text", async () => {
+	const noticeParts = [
+		"Gemini 3.5 Flash is no longer available. Please ",
+		"switch to Gemini 3.7 Flash in the latest version of Antigravity.",
+	];
+	const sse = noticeParts
+		.map((text) =>
+			`data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text }] } }] } })}`,
+		)
+		.join("\n\n");
+
+	await withFetchStub(
+		(url) =>
+			url.includes("fetchAvailableModels")
+				? new Response(JSON.stringify({ models: {} }), { status: 200 })
+				: new Response(`${sse}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		async () => {
+			const stream = streamAntigravity(
+				fakeModel("gemini-3.5-flash"),
+				normalizeContext({
+					systemPrompt: "You are pi.",
+					messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+				} as never),
+				{
+					apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+					sessionId: "-3535353535",
+				} as never,
+			);
+			const result = await stream.result();
+			const eventTypes: string[] = [];
+			for await (const event of stream) eventTypes.push(event.type);
+
+			assert.equal(result.stopReason, "error");
+			assert.match(result.errorMessage ?? "", /switch to gemini-3\.8-flash/i);
+			assert.deepEqual(result.content, []);
+			assert.equal(eventTypes.some((type) => type.startsWith("text_")), false);
+		}
+	);
+});
+
+test("interleaved Gemini thinking does not leak a retired-model notice", async () => {
+	const parts = [
+		{ text: "Gemini 3.5 Flash is no longer available. Please " },
+		{ text: "checking service status", thought: true, thoughtSignature: "dGhpbmtpbmc=" },
+		{ text: "switch to Gemini 3.7 Flash in the latest version of Antigravity." },
+	];
+	const sse = parts
+		.map((part) => `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [part] } }] } })}`)
+		.join("\n\n");
+
+	await withFetchStub(
+		(url) =>
+			url.includes("fetchAvailableModels")
+				? new Response(JSON.stringify({ models: {} }), { status: 200 })
+				: new Response(`${sse}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		async () => {
+			const stream = streamAntigravity(
+				fakeModel("gemini-3.5-flash"),
+				normalizeContext({
+					systemPrompt: "You are pi.",
+					messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+				} as never),
+				{
+					apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+					sessionId: "-3535353536",
+				} as never,
+			);
+			const result = await stream.result();
+			const eventTypes: string[] = [];
+			for await (const event of stream) eventTypes.push(event.type);
+
+			assert.equal(result.stopReason, "error");
+			assert.match(result.errorMessage ?? "", /switch to gemini-3\.8-flash/i);
+			assert.deepEqual(result.content, []);
+			assert.equal(eventTypes.some((type) => type.startsWith("text_")), false);
+		},
+	);
+});
+
+test("interleaved thinking and text keep their order when the retirement prefix diverges", async () => {
+	const parts = [
+		{ text: "Gemini 3.5 Flash is no longer available. Please ", thoughtSignature: "dGV4dA==" },
+		{ text: "checking service status", thought: true, thoughtSignature: "dGhpbmtpbmc=" },
+		{ text: "actually, I was quoting another transcript." },
+	];
+	const sse = parts
+		.map((part) => `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [part] } }] } })}`)
+		.join("\n\n");
+
+	await withFetchStub(
+		(url) =>
+			url.includes("fetchAvailableModels")
+				? new Response(JSON.stringify({ models: {} }), { status: 200 })
+				: new Response(`${sse}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		async () => {
+			const stream = streamAntigravity(
+				fakeModel("gemini-3.5-flash"),
+				normalizeContext({
+					systemPrompt: "You are pi.",
+					messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+				} as never),
+				{
+					apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+					sessionId: "-3535353537",
+				} as never,
+			);
+			const result = await stream.result();
+			const content = result.content as Array<{
+				type: string;
+				text?: string;
+				textSignature?: string;
+				thinking?: string;
+				thinkingSignature?: string;
+			}>;
+			const eventTypes: string[] = [];
+			for await (const event of stream) eventTypes.push(event.type);
+
+			assert.equal(result.stopReason, "stop");
+			assert.deepEqual(content.map((block) => block.type), ["text", "thinking", "text"]);
+			assert.equal(content[0]?.text, parts[0]?.text);
+			assert.equal(content[0]?.textSignature, "dGV4dA==");
+			assert.equal(content[1]?.thinking, parts[1]?.text);
+			assert.equal(content[1]?.thinkingSignature, "dGhpbmtpbmc=");
+			assert.equal(content[2]?.text, parts[2]?.text);
+			assert.deepEqual(
+				eventTypes.filter((type) => /^(?:text|thinking)_(?:start|delta|end)$/.test(type)),
+				[
+					"text_start",
+					"text_delta",
+					"text_end",
+					"thinking_start",
+					"thinking_delta",
+					"thinking_end",
+					"text_start",
+					"text_delta",
+					"text_end",
+				],
+			);
+		},
+	);
+});
+
+test("streamResponse flushes an incomplete retirement prefix and thinking at EOF", async () => {
+	const response = new Response(
+		retirementSse(
+			[
+				{ text: "Gemini 3.5 Flash is no longer available. Please ", thoughtSignature: "dGV4dA==" },
+				{ text: "checking service status", thought: true, thoughtSignature: "dGhpbmtpbmc=" },
+			],
+			"STOP",
+		),
+	);
+	const stream = createAssistantMessageEventStream();
+	const output = streamResponseOutput();
+
+	assert.equal(await streamResponse(response, stream, output, undefined, undefined, true), true);
+	stream.end(output);
+	const result = await stream.result();
+	assert.equal(result.stopReason, "stop");
+	assert.deepEqual(result.content.map((block) => block.type), ["text", "thinking"]);
+	assert.equal(result.content[0]?.type === "text" ? result.content[0].text : undefined, "Gemini 3.5 Flash is no longer available. Please ");
+	assert.equal(result.content[1]?.type === "thinking" ? result.content[1].thinking : undefined, "checking service status");
+});
+
+test("streamResponse flushes a tentative prefix before a function call", async () => {
+	const response = new Response(
+		retirementSse(
+			[
+				{ text: "Gemini 3.5 Flash is no longer available. Please " },
+				{ text: "checking service status", thought: true },
+				{ functionCall: { id: "read-1", name: "read", args: { path: "src/index.ts" } } },
+			],
+			"STOP",
+		),
+	);
+	const stream = createAssistantMessageEventStream();
+	const output = streamResponseOutput();
+
+	assert.equal(await streamResponse(response, stream, output, undefined, undefined, true), true);
+	stream.end(output);
+	const result = await stream.result();
+	assert.equal(result.stopReason, "toolUse");
+	assert.deepEqual(result.content.map((block) => block.type), ["text", "thinking", "toolCall"]);
+	assert.equal(result.content[2]?.type === "toolCall" ? result.content[2].name : undefined, "read");
+});
+
+test("retirement detection releases the reader when cancellation succeeds", async () => {
+	let cancelCalled = false;
+	const response = openRetirementNoticeResponse(() => {
+		cancelCalled = true;
+	});
+	const output = streamResponseOutput();
+	const stream = createAssistantMessageEventStream();
+
+	await assert.rejects(
+		streamResponse(response, stream, output, undefined, undefined, true),
+		/Gemini 3\.5 Flash is no longer available/,
+	);
+	assert.equal(cancelCalled, true);
+	assert.equal(response.body?.locked, false);
+	assert.deepEqual(output.content, []);
+});
+
+test("retirement detection releases the reader when cancellation rejects", async () => {
+	let cancelCalled = false;
+	const response = openRetirementNoticeResponse(() => {
+		cancelCalled = true;
+		throw new Error("cancel rejected");
+	});
+	const output = streamResponseOutput();
+	const stream = createAssistantMessageEventStream();
+
+	await assert.rejects(
+		streamResponse(response, stream, output, undefined, undefined, true),
+		/Gemini 3\.5 Flash is no longer available/,
+	);
+	assert.equal(cancelCalled, true);
+	assert.equal(response.body?.locked, false);
+	assert.deepEqual(output.content, []);
+});
+
+test("retirement notice quoted in a normal Gemini reply is not treated as an error", async () => {
+	const reply =
+		'The previous session said: "Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash."';
+	const sse = `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: reply }] }, finishReason: "STOP" }] } })}\n\n`;
+
+	await withFetchStub(
+		() => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		async () => {
+			const stream = streamAntigravity(
+				fakeModel("gemini-3.8-flash"),
+				normalizeContext({
+					systemPrompt: "You are pi.",
+					messages: [{ role: "user", content: [{ type: "text", text: "What happened?" }] }],
+				} as never),
+				{
+					apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+					sessionId: "-3838383838",
+				} as never,
+			);
+			const result = await stream.result();
+
+			assert.equal(result.stopReason, "stop");
+			assert.equal(result.content[0]?.type, "text");
+			if (result.content[0]?.type === "text") assert.equal(result.content[0].text, reply);
+		}
+	);
 });
 
 test("streamResponse parses SSE into blocks, usage, and stop reason", async () => {
@@ -1160,12 +1489,12 @@ test("getApiKey serializes token + projectId for the stream layer", () => {
 /* -------------------------------- image.ts ------------------------------- */
 
 test("image save paths are contained to the working directory", () => {
-	const cwd = "/tmp/pikit-image-test";
+	const cwd = join(tmpdir(), "pikit-image-test");
 	assert.throws(() => resolveImageSavePath(cwd, "../escape.png"), /inside the working directory/);
 	const inDir = resolveImageSavePath(cwd, "sub/dir/shot.png", "image/png");
-	assert.ok(inDir.startsWith(`${cwd}/sub/dir/shot.png`));
+	assert.equal(inDir, join(cwd, "sub", "dir", "shot.png"));
 	const fallback = resolveImageSavePath(cwd, undefined, "image/png");
-	assert.ok(fallback.includes(".pi/generated-images/"));
+	assert.ok(fallback.includes(join(".pi", "generated-images")));
 	assert.ok(fallback.endsWith(".png"));
 });
 
@@ -1175,6 +1504,73 @@ test("image command args parse flags and prompt", () => {
 	assert.equal(parsed.model, "gemini-3-pro-image");
 	assert.equal(parsed.path, "out.png");
 	assert.equal(parsed.prompt, "a cozy cabin");
+});
+
+test("image generation uses the supported model as its default", async () => {
+	const models: string[] = [];
+	const imageResponse = `data: ${JSON.stringify({
+		response: {
+			candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1hZ2U=" } }] } }],
+		},
+	})}\n\n`;
+
+	await withFetchStub(
+		(_url, _call, init) => {
+			assert.equal(typeof init?.body, "string");
+			models.push((JSON.parse(init.body as string) as { model: string }).model);
+			return new Response(imageResponse, { status: 200, headers: { "content-type": "text/event-stream" } });
+		},
+		async (calls) => {
+			const result = await generateAntigravityImage({
+				apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+				cwd: testTempDir,
+				path: "default-image.png",
+				prompt: "a test image",
+			});
+			assert.equal(DEFAULT_IMAGE_MODEL, "gemini-3.1-flash-image");
+			assert.deepEqual(models, ["gemini-3.1-flash-image"]);
+			assert.equal(calls.length, 1);
+			assert.equal(result.model, "gemini-3.1-flash-image");
+		},
+	);
+});
+
+test("explicit retired image-model override falls back to the new default", async () => {
+	const models: string[] = [];
+	const imageResponse = `data: ${JSON.stringify({
+		response: {
+			candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1hZ2U=" } }] } }],
+		},
+	})}\n\n`;
+
+	await withFetchStub(
+		(_url, _call, init) => {
+			assert.equal(typeof init?.body, "string");
+			const model = (JSON.parse(init.body as string) as { model: string }).model;
+			models.push(model);
+			if (model === "gemini-3-pro-image") {
+				return errorResponse(404, "Requested entity was not found");
+			}
+			return new Response(imageResponse, { status: 200, headers: { "content-type": "text/event-stream" } });
+		},
+		async (calls) => {
+			const result = await generateAntigravityImage({
+				apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+				cwd: testTempDir,
+				path: "override-fallback.png",
+				prompt: "a test image",
+				model: "gemini-3-pro-image",
+			});
+			assert.deepEqual(models, [
+				"gemini-3-pro-image",
+				"gemini-3-pro-image",
+				"gemini-3-pro-image",
+				"gemini-3.1-flash-image",
+			]);
+			assert.equal(calls.length, 4);
+			assert.equal(result.model, "gemini-3.1-flash-image");
+		},
+	);
 });
 
 test("image model and aspect ratio validation", () => {

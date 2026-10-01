@@ -8,18 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Removed Gemini 3.5 Flash from the model catalog and routing.** The backend retired
-  it, and the remaining `gemini-3.5-flash-*` / `gemini-3-flash-agent` runtime ids answer
-  with HTTP 200 whose body is the notice "Gemini 3.5 Flash is no longer available. Please
-  switch to Gemini 3.7 Flash in the latest version of Antigravity." rather than an error
-  status, so the notice was surfaced to the user as if it were the model's reply and no
-  fallback logic could trigger. Selecting `gemini-3.5-flash` now falls through to the
-  unmapped-id path; users should pick gemini-3.7-flash or newer.
-- **Image generation now defaults to `gemini-3.1-flash-image`.** The previous default
-  `gemini-3-pro-image` (and `-preview`) return 404 since the backend image refresh;
-  `gemini-3.1-flash-image` is the id Google's `fetchAvailableModels` advertises under
-  `imageGenerationModelIds` and was verified working. The old ids remain in the fallback
-  list so explicit `--model` overrides still resolve if Google restores them.
+- Kept the provider loadable in packaged Pi runtimes by moving pi-ai subpath helpers into a local module, matched to the resolved pi-ai 0.86.0 implementation.
+- Excluded Gemini 3.5 Flash from the selectable catalog and added a pre-stream guard for the reported retirement notice so it is not emitted as assistant text.
+- Defaulted image generation to `gemini-3.1-flash-image` while retaining older image models as explicit fallbacks.
+- Made image path assertions portable across Windows and POSIX systems.
 
 ## [0.1.5] - 2026-09-26
 

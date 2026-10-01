@@ -17,13 +17,10 @@ export const PROVIDER_NAME = "Antigravity";
  * - Claude Opus 4.6 (Thinking)
  * - GPT-OSS 120B (Medium)
  *
- * Gemini 3.5 Flash was removed: the backend retired it and every remaining
- * runtime id (gemini-3.5-flash-*, gemini-3-flash-agent) answers with HTTP 200
- * and a body of "Gemini 3.5 Flash is no longer available..." instead of an
- * error status, so it cannot be detected or retried at the transport layer.
- *
- * Pi exposes those as public model IDs and only surfaces the exact thinking levels
- * advertised by the backend for each model.
+ * Gemini 3.5 Flash is intentionally omitted from the selectable catalog; the
+ * stream handler recognizes the reported retirement notice for old model IDs.
+ * Pi exposes the remaining models as public IDs and surfaces the exact thinking
+ * levels advertised by the backend for each model.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
   "gemini-3.8-flash": {
