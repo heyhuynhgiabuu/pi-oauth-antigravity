@@ -26,7 +26,6 @@ Google Antigravity OAuth provider extension for [Pi](https://pi.dev). Connects P
 | `antigravity/gemini-3.7-flash` | `gemini-3.7-flash-{low,medium,high}` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.7-flash-thinking` | `gemini-3.7-flash-thinking` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.6-flash` | `gemini-3.6-flash-{low,medium,high}` | 65,536 | 1,048,576 |
-| `antigravity/gemini-3.5-flash` | `gemini-3.5-flash` | 8,192 | 1,048,576 |
 | `antigravity/gemini-3.1-pro` | `gemini-3.1-pro` | 65,536 | 1,048,576 |
 | `antigravity/claude-sonnet-4-6` | `claude-sonnet-4-6` | 64,000 | 200,000 |
 | `antigravity/claude-opus-4-6` | `claude-opus-4-6` | 64,000 | 200,000 |

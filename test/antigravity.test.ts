@@ -54,6 +54,7 @@ import { getApiKey } from "../src/auth/index.js";
 import {
 	assertSafeAspectRatio,
 	assertSafeImageModel,
+	DEFAULT_IMAGE_MODEL,
 	parseImageCommandArgs,
 	resolveImageSavePath,
 } from "../src/image/image.js";
@@ -218,13 +219,12 @@ test("transcript adapter replays normalized system deltas", () => {
 
 test("model catalog mirrors agy models with per-model thinking maps", () => {
 	assert.equal(PROVIDER_ID, "antigravity");
-	assert.equal(ANTIGRAVITY_MODELS.length, 8);
+	assert.equal(ANTIGRAVITY_MODELS.length, 7);
 	const ids = ANTIGRAVITY_MODELS.map((m) => m.id).sort();
 	assert.deepEqual(ids, [
 		"claude-opus-4-6",
 		"claude-sonnet-4-6",
 		"gemini-3.1-pro",
-		"gemini-3.5-flash",
 		"gemini-3.6-flash",
 		"gemini-3.7-flash",
 		"gemini-3.8-flash",
@@ -244,8 +244,8 @@ test("effort routing maps public ids to backend runtime ids", () => {
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "medium"), "gemini-3.8-flash-medium");
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "high"), "gemini-3.8-flash-high");
 	assert.equal(getAntigravityRequestModelId("gemini-3.8-flash", "xhigh"), "gemini-3.8-flash-high");
-	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "off"), "gemini-3.5-flash-extra-low");
-	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "high"), "gemini-3-flash-agent");
+	// gemini-3.5-flash was retired by the backend; as an unmapped id it must pass through untouched.
+	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "off"), "gemini-3.5-flash");
 	assert.equal(getAntigravityRequestModelId("gemini-3.1-pro", "high"), "gemini-pro-agent");
 	assert.equal(getAntigravityRequestModelId("claude-sonnet-4-6", "high"), "claude-sonnet-4-6");
 	assert.equal(getAntigravityRequestModelId("unknown-model", "high"), "unknown-model");
@@ -259,6 +259,7 @@ test("fallback runtime model covers next-gen gemini only", () => {
 	assert.equal(getFallbackRuntimeModel("gemini-3.7-flash"), "gemini-3.6-flash-low");
 	assert.equal(getFallbackRuntimeModel("claude-sonnet-4-6"), undefined);
 	assert.equal(getFallbackRuntimeModel("gemini-3.5-flash-low"), undefined);
+	assert.equal(getFallbackRuntimeModel("gemini-3.5-flash"), undefined);
 });
 
 test("max output tokens clamp per runtime id", () => {
@@ -280,8 +281,7 @@ test("thinking config per model family", () => {
 		includeThoughts: true,
 		thinkingLevel: "MEDIUM",
 	});
-	const budget = getThinkingConfig("gemini-3.5-flash", "high");
-	assert.equal((budget as { thinkingBudget?: number }).thinkingBudget, 10_000);
+	assert.equal(getThinkingConfig("gemini-3.5-flash", "high"), undefined);
 	assert.equal(getThinkingConfig("claude-sonnet-4-6", "high"), undefined);
 });
 
@@ -1141,9 +1141,9 @@ test("request envelope labels use claude flags and model enums", () => {
 	const claude = antigravityRequestEnvelope("claude-opus-4-6-thinking", true);
 	assert.equal(claude.labels.used_claude, "true");
 	assert.match(claude.requestId, /^agent\//);
-	const gemini = antigravityRequestEnvelope("gemini-3.5-flash-extra-low", false);
+	const gemini = antigravityRequestEnvelope("gemini-3.1-pro-low", false);
 	assert.equal(gemini.labels.used_claude, "false");
-	assert.equal(gemini.labels.model_enum, "MODEL_PLACEHOLDER_M187");
+	assert.equal(gemini.labels.model_enum, "MODEL_PLACEHOLDER_M36");
 });
 
 /* ------------------------------- auth/oauth ------------------------------ */
@@ -1178,6 +1178,8 @@ test("image command args parse flags and prompt", () => {
 });
 
 test("image model and aspect ratio validation", () => {
+	assert.equal(DEFAULT_IMAGE_MODEL, "gemini-3.1-flash-image");
+	assert.equal(assertSafeImageModel(DEFAULT_IMAGE_MODEL), DEFAULT_IMAGE_MODEL);
 	assert.equal(assertSafeImageModel("gemini-3-pro-image"), "gemini-3-pro-image");
 	assert.equal(assertSafeImageModel("imagen-4.0"), "imagen-4.0");
 	assert.throws(() => assertSafeImageModel("claude-sonnet-4-6"), /Unsupported image model/);

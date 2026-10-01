@@ -711,7 +711,7 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
   }
   if (status === 404) {
     if (/Requested entity was not found/i.test(msg)) {
-      return "This model is not available right now. Next: switch to gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, or another working model.";
+      return "This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.1-pro, or another working model.";
     }
     return `Antigravity could not find the requested resource. Next: retry or switch models. Backend said: ${msg}`;
   }
@@ -1143,6 +1143,20 @@ export function streamAntigravity(
         output.stopReason = "stop";
 
         received = await streamResponse(response, stream, output, model, sessionState);
+        // The backend answers retired models with HTTP 200 whose body is a deprecation
+        // notice instead of an error status, so no status-based fallback can trigger.
+        // Treat the notice as a hard error: users pinned to a retired model must see a
+        // failure that names a real alternative, never the notice as a reply.
+        const replyText = output.content
+          .filter((block): block is { type: "text"; text: string } => block.type === "text")
+          .map((block) => block.text)
+          .join("");
+        if (received && /is no longer available\. Please switch to/i.test(replyText)) {
+          throw new Error(
+            `Antigravity retired this model (backend said: "${replyText.trim().slice(0, 200)}"). ` +
+              "Next: switch to gemini-3.8-flash, gemini-3.7-flash, or another catalog model.",
+          );
+        }
         if (received) break;
       }
 

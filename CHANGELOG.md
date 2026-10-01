@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Removed Gemini 3.5 Flash from the model catalog and routing.** The backend retired
+  it, and the remaining `gemini-3.5-flash-*` / `gemini-3-flash-agent` runtime ids answer
+  with HTTP 200 whose body is the notice "Gemini 3.5 Flash is no longer available. Please
+  switch to Gemini 3.7 Flash in the latest version of Antigravity." rather than an error
+  status, so the notice was surfaced to the user as if it were the model's reply and no
+  fallback logic could trigger. Selecting `gemini-3.5-flash` now falls through to the
+  unmapped-id path; users should pick gemini-3.7-flash or newer.
+- **Image generation now defaults to `gemini-3.1-flash-image`.** The previous default
+  `gemini-3-pro-image` (and `-preview`) return 404 since the backend image refresh;
+  `gemini-3.1-flash-image` is the id Google's `fetchAvailableModels` advertises under
+  `imageGenerationModelIds` and was verified working. The old ids remain in the fallback
+  list so explicit `--model` overrides still resolve if Google restores them.
+
 ## [0.1.5] - 2026-09-26
 
 ### Fixed

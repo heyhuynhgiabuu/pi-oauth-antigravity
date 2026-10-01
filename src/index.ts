@@ -141,7 +141,7 @@ export default function (pi: ExtensionAPI): void {
       if (!parsed.prompt) {
         emitCommandOutput(
           ctx,
-          "Usage: /antigravity.image [--ratio 16:9] [--model gemini-3-pro-image] [--path file.png] <prompt>",
+          "Usage: /antigravity.image [--ratio 16:9] [--model gemini-3.1-flash-image] [--path file.png] <prompt>",
           "warning",
         );
         return;
