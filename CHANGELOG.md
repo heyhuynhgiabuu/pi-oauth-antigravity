@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-01
+
 ### Fixed
 - Kept the provider loadable in packaged Pi runtimes by moving pi-ai subpath helpers into a local module, matched to the resolved pi-ai 0.86.0 implementation.
 - Excluded Gemini 3.5 Flash from the selectable catalog and added a pre-stream guard for the reported retirement notice so it is not emitted as assistant text.
