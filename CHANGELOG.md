@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-26
+
 ### Added
 - Optional [`pi-usage-core`](https://github.com/ReStranger/pi-usage-core) integration. When that extension is loaded, Antigravity quota pools (Gemini 5h/weekly, Claude+GPT) and account details are also registered into its unified `/usage` dashboard and persistent footer status line. `pi-usage-core` is not a runtime dependency: with or without it, this package works on its own.
 - `/antigravity.doctor` now reports which usage mode is active on a `usageCore=` line.
