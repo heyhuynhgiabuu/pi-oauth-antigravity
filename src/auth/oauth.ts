@@ -438,6 +438,7 @@ export function getApiKey(credentials: OAuthCredentials): string {
   return JSON.stringify({
     token: credentials.access,
     projectId: credentialProjectId(credentials) || defaultProjectId(email || "antigravity-default"),
+    ...(email ? { email } : {}),
   });
 }
 

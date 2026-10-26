@@ -35,6 +35,19 @@ export async function runWithDiagnostics<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * Run work with its own diagnostics bag that is discarded instead of committed.
+ *
+ * `/antigravity.doctor` reports the snapshot of the last model request, so a read-only poll
+ * must not commit: a quota fetch that fails for unrelated reasons (e.g. the free-tier
+ * `SUBSCRIPTION_REQUIRED` RPC) would otherwise be shown as that request's error. Used by the
+ * usage adapter's background polling and by the `/antigravity.usage` / `/antigravity.models`
+ * commands.
+ */
+export async function runWithDetachedDiagnostics<T>(fn: () => Promise<T>): Promise<T> {
+  return storage.run({}, fn);
+}
+
 export function getLastDiagnostics(): Readonly<DiagnosticsSnapshot> {
   return lastSnapshot;
 }
