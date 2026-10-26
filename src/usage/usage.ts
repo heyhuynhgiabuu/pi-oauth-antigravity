@@ -1,4 +1,5 @@
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import {
   antigravityHeaders,
   endpointCandidates,
@@ -6,6 +7,7 @@ import {
   parseApiKey,
   resolveProjectId,
 } from "../client/client.js";
+import { PROVIDER_ID } from "../models/models.js";
 import {
   setLastEndpoint,
   setLastError,
@@ -360,6 +362,7 @@ export async function fetchAccountUsage(apiKeyRaw?: string): Promise<AccountUsag
   return {
     projectId,
     endpoint: summary?.endpoint ?? available.endpoint ?? assistResult?.endpoint,
+    email: creds.email,
     productTier,
     paidTier,
     planLabel,
@@ -444,11 +447,33 @@ export function formatModelsList(usage: AccountUsage, opts?: { all?: boolean }):
 }
 
 export async function resolveApiKeyFromContext(
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext | ExtensionCommandContext,
 ): Promise<string | undefined> {
   try {
-    return await ctx.modelRegistry.getApiKeyForProvider("antigravity");
+    const key = await ctx.modelRegistry.getApiKeyForProvider("antigravity");
+    if (key) return key;
   } catch {
-    return undefined;
+    // continue to fallback
   }
+
+  try {
+    // `readStoredCredential` owns the auth.json path and parsing, so this fallback cannot
+    // drift from the host's credential format.
+    const stored = readStoredCredential(PROVIDER_ID) as
+      | { access?: unknown; projectId?: unknown; email?: unknown; expires?: unknown }
+      | undefined;
+    const access = typeof stored?.access === "string" ? stored.access : undefined;
+    const projectId = typeof stored?.projectId === "string" ? stored.projectId : undefined;
+    if (access && projectId) {
+      // A stored token without an expiry is still usable; only reject a known-expired one.
+      const expires = typeof stored?.expires === "number" ? stored.expires : undefined;
+      if (expires !== undefined && expires <= Date.now()) return undefined;
+      const email = typeof stored?.email === "string" ? stored.email : undefined;
+      return JSON.stringify({ token: access, projectId, ...(email ? { email } : {}) });
+    }
+  } catch {
+    // Ignore fallback errors
+  }
+
+  return undefined;
 }

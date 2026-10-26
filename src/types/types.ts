@@ -21,9 +21,11 @@ export type AntigravityOAuthCredentials = OAuthCredentials & {
   email?: string;
 };
 
+// Antigravity credentials
 export type AntigravityApiKey = {
   token: string;
   projectId: string;
+  email?: string;
 };
 
 export type DynamicModelInfo = {
