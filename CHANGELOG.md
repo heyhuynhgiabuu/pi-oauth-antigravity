@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional [`pi-usage-core`](https://github.com/ReStranger/pi-usage-core) integration. When that extension is loaded, Antigravity quota pools (Gemini 5h/weekly, Claude+GPT) and account details are also registered into its unified `/usage` dashboard and persistent footer status line. `pi-usage-core` is not a runtime dependency: with or without it, this package works on its own.
+- `/antigravity.doctor` now reports which usage mode is active on a `usageCore=` line.
+
+### Changed
+- `/antigravity.usage` remains available as a standalone command and now appends a one-line tip when `pi-usage-core` is installed, instead of being replaced by the integration.
+
+### Fixed
+- A background quota poll no longer overwrites the diagnostics `/antigravity.doctor` reports. Quota reads run in a detached bag, so a failed usage fetch (e.g. free-tier `SUBSCRIPTION_REQUIRED`) is no longer shown as the last model request's error.
+- A quota group whose buckets were all filtered out no longer produced a `ready` account with an empty pool, and no longer suppressed the per-model quota fallback.
+- Bucket periods are mapped from the reported window instead of collapsing every non-5h bucket to `weekly`, so daily and monthly quotas are no longer mislabelled in the footer's multi-window format.
+- Free-tier quota synthesized from the model catalog is labelled `total` instead of claiming a 5h session the backend never reported.
+- Groups sharing a model family no longer produce duplicate pool ids.
+- The account email is masked before it is displayed in a usage dashboard.
+- The `auth.json` credential fallback now uses the host's `readStoredCredential`, and a stored token without an expiry is usable instead of being silently ignored.
+
 ## [0.1.8] - 2026-10-15
 
 ### Fixed
