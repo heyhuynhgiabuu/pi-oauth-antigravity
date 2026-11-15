@@ -605,17 +605,32 @@ export function mapStopReason(reason: string | undefined): StopReason {
   return reason ? StopReason.Error : StopReason.Stop;
 }
 
-const RETIRED_GEMINI_35_NOTICE_PREFIX =
-  "gemini 3.5 flash is no longer available. please switch to";
+/**
+ * Backends answer retired models with a plain text notice instead of an error. The 3.5
+ * wording is the observed template; the 2026-11-18 removals (Claude 4.6, Sonnet 4.6,
+ * GPT-OSS 120B) are expected to reuse it. Match on the model name prefix, not the full
+ * sentence, so wording drift on the suffix stays harmless.
+ */
+const RETIRED_NOTICE_PREFIXES = [
+  "gemini 3.5 flash is no longer available. please switch to",
+  "claude-opus-4-6 is no longer available",
+  "claude-sonnet-4-6 is no longer available",
+  "gpt-oss-120b is no longer available",
+];
 
-function isRetiredGemini35Runtime(runtimeModel: string): boolean {
-  return /^(?:gemini-3\.5-flash(?:-|$)|gemini-3-flash-agent$)/i.test(runtimeModel);
+const RETIRED_RUNTIME_PATTERN =
+  /^(?:gemini-3\.5-flash(?:-|$)|gemini-3-flash-agent$|claude-opus-4-6|claude-sonnet-4-6|gpt-oss-120b)/i;
+
+function isRetiredRuntime(runtimeModel: string): boolean {
+  return RETIRED_RUNTIME_PATTERN.test(runtimeModel);
 }
 
 function retiredNoticePrefixState(text: string): "possible" | "match" | "no-match" {
   const normalized = text.trimStart().replace(/\s+/g, " ").toLowerCase();
-  if (normalized.startsWith(RETIRED_GEMINI_35_NOTICE_PREFIX)) return "match";
-  if (RETIRED_GEMINI_35_NOTICE_PREFIX.startsWith(normalized)) return "possible";
+  for (const prefix of RETIRED_NOTICE_PREFIXES) {
+    if (normalized.startsWith(prefix)) return "match";
+    if (prefix.startsWith(normalized) && normalized.length > 0) return "possible";
+  }
   return "no-match";
 }
 
@@ -951,8 +966,8 @@ export async function streamResponse(
               }
               reader.releaseLock();
               throw new Error(
-                "Antigravity reports that Gemini 3.5 Flash is no longer available. " +
-                  "Next: switch to gemini-3.8-flash, gemini-3.7-flash, or another catalog model.",
+                "Antigravity reports that this model has been retired and is no longer available. " +
+                  "Next: switch to a current catalog model (see /antigravity.models).",
               );
             }
             if (noticeState !== "possible") flushPendingRetiredNoticeParts();
@@ -1237,7 +1252,7 @@ export function streamAntigravity(
           output,
           model,
           sessionState,
-          isRetiredGemini35Runtime(runtimeModel),
+          isRetiredRuntime(runtimeModel),
         );
         if (received) break;
       }

@@ -23,25 +23,46 @@ Google Antigravity OAuth provider extension for [Pi](https://pi.dev). Connects P
 
 | Public Model ID | Backend Wire ID | Max Output | Context Window |
 | :--- | :--- | :--- | :--- |
-| `antigravity/gemini-4-argon` | `gemini-4-argon-{low,medium,high}`† | 65,536† | 1,048,576† |
+| `antigravity/gemini-4-hydrogen` | `gemini-4-hydrogen-{low,medium,high,xhigh}`† | 65,536† | 1,048,576† |
+| `antigravity/gemini-4-carbon` | `gemini-4-carbon-{low,medium,high}`† | 65,536† | 1,048,576† |
+| `antigravity/gemini-4-argon` | `gemini-4-argon-{low,medium,high}` | 65,536† | 1,048,576† |
 | `antigravity/gemini-3.8-flash` | `gemini-3.8-flash-{low,medium,high}` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.7-flash` | `gemini-3.7-flash-{low,medium,high}` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.7-flash-thinking` | `gemini-3.7-flash-thinking` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.6-flash` | `gemini-3.6-flash-{low,medium,high}` | 65,536 | 1,048,576 |
 | `antigravity/gemini-3.1-pro` | `gemini-3.1-pro` | 65,536 | 1,048,576 |
-| `antigravity/claude-opus-4-6` | `claude-opus-4-6` | 64,000 | 200,000 |
 | `antigravity/claude-opus-5-5-low` | `claude-opus-5-5-low` | 64,000* | 250,000* |
 | `antigravity/claude-opus-5-5-medium` | `claude-opus-5-5-medium` | 64,000* | 250,000* |
 | `antigravity/claude-opus-5-5-high` | `claude-opus-5-5-high` | 64,000* | 250,000* |
-| `antigravity/claude-sonnet-4-6` | `claude-sonnet-4-6` | 64,000 | 200,000 |
 | `antigravity/claude-sonnet-5-5-low` | `claude-sonnet-5-5-low` | 64,000* | 200,000* |
 | `antigravity/claude-sonnet-5-5-medium` | `claude-sonnet-5-5-medium` | 64,000* | 200,000* |
 | `antigravity/claude-sonnet-5-5-high` | `claude-sonnet-5-5-high` | 64,000* | 200,000* |
-| `antigravity/gpt-oss-120b` | `gpt-oss-120b` | 8,192 | 131,072 |
 
-† Inferred from runtime ids referenced by Antigravity IDE 2.23.0, not yet confirmed against a live model listing; limits and pricing are provisional, and requests fall back to Gemini 3.8 Flash if the backend rejects the model.
+Hydrogen (2026-11-12) is the first model with an `-xhigh` effort tier; Carbon (2026-11-10)
+and Argon (2026-10-13) top out at High. Argon/Carbon/Hydrogen are entitlement-gated
+(Ultra / Enterprise / paid Pro); a rejected request falls back through the Gemini 4
+family to Gemini 3.8 Flash.
+
+`claude-opus-4-6-thinking`, `claude-sonnet-4-6` and `gpt-oss-120b-medium` were removed by
+Google on **2026-11-18** and are no longer selectable; pinned overrides to their wire ids
+still resolve until the backend drops them, and their retirement notices are detected and
+surfaced as errors instead of assistant text.
+
+### Third-party OAuth is a ToS risk
+
+Google's enforcement against third-party Antigravity OAuth clients is active: appeal forms
+name "using third party software to access Antigravity", and 403 `PERMISSION_DENIED /
+TOS_VIOLATION` reports against third-party clients exist (oh-my-pi paused its provider on
+2026-11-14 for this reason). Using this extension may put your Google account at risk —
+prefer the official Antigravity IDE/CLI when possible, and don't say you weren't warned.
+
+† Gemini 4 family: Argon wire ids verified against live discovery (2026-10-14); Carbon/Hydrogen wire ids follow the family pattern but are UNVERIFIED against a live listing. Limits and pricing are same-family estimates; a rejected request falls back to the previous Gemini 4 model, then Gemini 3.8 Flash.
 
 \* Provisional same-family estimates only; Claude 5.5 backend output/context limits have not been verified.
+
+The request identity tracks the shipping client (`antigravity/hub/2.32.1`) and every call
+sends fresh `x-cloudaicompanion-trace-id` / `X-Aicode-Request-Id` headers — a stale client
+identity silently receives a REDUCED model catalog from discovery, without an error.
 
 ## Installation
 

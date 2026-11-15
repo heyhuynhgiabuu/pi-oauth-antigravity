@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+### Added
+
+- **Gemini 4 Carbon** (`gemini-4-carbon-{low,medium,high}`, launched 2026-11-10) and
+  **Gemini 4 Hydrogen** (`gemini-4-hydrogen-{low,medium,high,xhigh}`, launched 2026-11-12 —
+  the backend's first `-xhigh` effort tier). Carbon/Hydrogen wire ids follow the family
+  pattern and are UNVERIFIED against a live listing; rejected requests fall back through
+  the Gemini 4 family (Hydrogen → Carbon → Argon → 3.8 Flash), with an xHigh tier
+  downgrade at each family boundary since only Hydrogen advertises `-xhigh`.
+- Fresh `x-cloudaicompanion-trace-id` / `X-Aicode-Request-Id` headers on every request.
+
+### Changed
+
+- **`claude-opus-4-6-thinking`, `claude-sonnet-4-6` and `gpt-oss-120b-medium` leave the
+  selectable catalog** — Google removes them on 2026-11-18. Pinned overrides to their wire
+  ids still resolve (routing + output-token entries retained), and the retirement-notice
+  detector now covers their plain-text notices instead of rendering them as assistant text;
+  the surfaced error names retirement generically and points at `/antigravity.models`.
+- **Request identity tracks the shipping client** (`antigravity/hub/2.32.1`, was 2.23.0).
+  A stale identity silently receives a REDUCED model catalog from discovery, without an
+  error (codex2api e3d59f9; oh-my-pi pinned 2.32.1 on 2026-11-14 for the same reason).
+- Gemini 4 Argon is no longer provisional: launched 2026-10-13, wire ids verified against
+  live `fetchAvailableModels` (opencodex 2026-10-14, codex2api 2026-10-16). Catalog table
+  and README reflect the 2026-11 models doc; README carries a ToS-risk warning for
+  third-party OAuth use.
+
 ## [0.1.9] - 2026-10-26
 
 ### Added

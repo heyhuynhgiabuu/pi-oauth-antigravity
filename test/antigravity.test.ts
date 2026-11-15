@@ -269,14 +269,12 @@ test("transcript adapter replays normalized system deltas", () => {
 
 test("model catalog registers all Claude 5.5 tiers with per-model thinking maps", () => {
 	assert.equal(PROVIDER_ID, "antigravity");
-	assert.equal(ANTIGRAVITY_MODELS.length, 14);
+	assert.equal(ANTIGRAVITY_MODELS.length, 13);
 	const ids = ANTIGRAVITY_MODELS.map((m) => m.id).sort();
 	assert.deepEqual(ids, [
-		"claude-opus-4-6",
 		"claude-opus-5-5-high",
 		"claude-opus-5-5-low",
 		"claude-opus-5-5-medium",
-		"claude-sonnet-4-6",
 		"claude-sonnet-5-5-high",
 		"claude-sonnet-5-5-low",
 		"claude-sonnet-5-5-medium",
@@ -285,7 +283,8 @@ test("model catalog registers all Claude 5.5 tiers with per-model thinking maps"
 		"gemini-3.7-flash",
 		"gemini-3.8-flash",
 		"gemini-4-argon",
-		"gpt-oss-120b",
+		"gemini-4-carbon",
+		"gemini-4-hydrogen",
 	]);
 	for (const model of ANTIGRAVITY_MODELS) {
 		assert.ok((model as { thinkingLevelMap?: Record<string, unknown> }).thinkingLevelMap);
@@ -333,6 +332,12 @@ test("effort routing maps public ids to backend runtime ids", () => {
 	assert.equal(getAntigravityRequestModelId("gemini-3.5-flash", "high"), "gemini-3.5-flash");
 	assert.equal(getAntigravityRequestModelId("gemini-3.1-pro", "high"), "gemini-pro-agent");
 	assert.equal(getAntigravityRequestModelId("claude-sonnet-4-6", "high"), "claude-sonnet-4-6");
+	// Gemini 4 family: Hydrogen is the only model with an -xhigh wire id.
+	assert.equal(getAntigravityRequestModelId("gemini-4-hydrogen", "xhigh"), "gemini-4-hydrogen-xhigh");
+	assert.equal(getAntigravityRequestModelId("gemini-4-hydrogen", "high"), "gemini-4-hydrogen-high");
+	assert.equal(getAntigravityRequestModelId("gemini-4-carbon", "xhigh"), "gemini-4-carbon-high");
+	assert.equal(getAntigravityRequestModelId("gemini-4-carbon", "medium"), "gemini-4-carbon-medium");
+	assert.equal(getAntigravityRequestModelId("gpt-oss-120b", "off"), "gpt-oss-120b-medium");
 	for (const [family, tier] of [
 		["opus", "low"],
 		["opus", "medium"],
@@ -377,6 +382,11 @@ test("Claude 5.5 tier requests keep their exact runtime model ids", () => {
 });
 
 test("fallback runtime model covers next-gen gemini only", () => {
+	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen-xhigh"), "gemini-4-carbon-high");
+	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen-high"), "gemini-4-carbon-high");
+	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen"), "gemini-4-carbon-low");
+	assert.equal(getFallbackRuntimeModel("gemini-4-carbon-high"), "gemini-4-argon-high");
+	assert.equal(getFallbackRuntimeModel("gemini-4-carbon"), "gemini-4-argon-low");
 	assert.equal(getFallbackRuntimeModel("gemini-4-argon-high"), "gemini-3.8-flash-high");
 	assert.equal(getFallbackRuntimeModel("gemini-4-argon"), "gemini-3.8-flash-low");
 	assert.equal(getFallbackRuntimeModel("gemini-3.8-flash-high"), "gemini-3.7-flash-high");
@@ -1043,7 +1053,7 @@ test("retired Gemini 3.5 SSE notice fails without emitting it as assistant text"
 			for await (const event of stream) eventTypes.push(event.type);
 
 			assert.equal(result.stopReason, "error");
-			assert.match(result.errorMessage ?? "", /switch to gemini-3\.8-flash/i);
+			assert.match(result.errorMessage ?? "", /switch to a current catalog model/i);
 			assert.deepEqual(result.content, []);
 			assert.equal(eventTypes.some((type) => type.startsWith("text_")), false);
 		}
@@ -1082,7 +1092,7 @@ test("interleaved Gemini thinking does not leak a retired-model notice", async (
 			for await (const event of stream) eventTypes.push(event.type);
 
 			assert.equal(result.stopReason, "error");
-			assert.match(result.errorMessage ?? "", /switch to gemini-3\.8-flash/i);
+			assert.match(result.errorMessage ?? "", /switch to a current catalog model/i);
 			assert.deepEqual(result.content, []);
 			assert.equal(eventTypes.some((type) => type.startsWith("text_")), false);
 		},
@@ -1206,7 +1216,7 @@ test("retirement detection releases the reader when cancellation succeeds", asyn
 
 	await assert.rejects(
 		streamResponse(response, stream, output, undefined, undefined, true),
-		/Gemini 3\.5 Flash is no longer available/,
+		/retired and is no longer available/,
 	);
 	assert.equal(cancelCalled, true);
 	assert.equal(response.body?.locked, false);
@@ -1224,7 +1234,7 @@ test("retirement detection releases the reader when cancellation rejects", async
 
 	await assert.rejects(
 		streamResponse(response, stream, output, undefined, undefined, true),
-		/Gemini 3\.5 Flash is no longer available/,
+		/retired and is no longer available/,
 	);
 	assert.equal(cancelCalled, true);
 	assert.equal(response.body?.locked, false);
@@ -1380,6 +1390,36 @@ test("antigravityHeaders carry bearer auth and client metadata", () => {
 	assert.equal(headers.Authorization, "Bearer tok");
 	assert.equal(headers.Accept, "text/event-stream");
 	assert.ok(headers["Client-Metadata"].includes("ANTIGRAVITY"));
+});
+
+test("antigravityHeaders generate a fresh trace and request id per call", () => {
+	const first = antigravityHeaders("tok");
+	const second = antigravityHeaders("tok");
+	assert.ok(first["x-cloudaicompanion-trace-id"]);
+	assert.ok(first["X-Aicode-Request-Id"]);
+	assert.notEqual(first["x-cloudaicompanion-trace-id"], second["x-cloudaicompanion-trace-id"]);
+	assert.notEqual(first["X-Aicode-Request-Id"], second["X-Aicode-Request-Id"]);
+});
+
+test("retirement detection covers the models removed 2026-11-18", async () => {
+	// Claude/GPT retirements reuse the plain-text notice shape observed for Gemini 3.5.
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(
+				new TextEncoder().encode(
+					retirementSse([{ text: "claude-opus-4-6 is no longer available. Please switch to" }]),
+				),
+			);
+		},
+		cancel() {},
+	});
+	const output = streamResponseOutput();
+	const stream = createAssistantMessageEventStream();
+	await assert.rejects(
+		streamResponse(new Response(body), stream, output, undefined, undefined, true),
+		/retired and is no longer available/,
+	);
+	assert.deepEqual(output.content, []);
 });
 
 test("isUsableRuntimeModelId rejects placeholder enums", () => {

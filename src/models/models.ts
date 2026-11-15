@@ -9,29 +9,54 @@ export const PROVIDER_NAME = "Antigravity";
 /**
  * Public selectable model IDs → backend request model IDs by thinking effort.
  *
- * Catalog mirrors `agy models` (Antigravity CLI), which currently advertises:
- * - Gemini 4 Argon (Low / Medium / High) — provisional, see below
+ * Catalog mirrors `agy models` (Antigravity CLI) and the 2026-11 models doc, which advertises:
+ * - Gemini 4 Argon (Low / Medium / High) — CONFIRMED: launched 2026-10-13; wire IDs
+ *   `gemini-4-argon-{low,medium,high}` verified against live `fetchAvailableModels`
+ *   (opencodex 2026-10-14, codex2api 2026-10-16). Entitlement-gated (Ultra / Enterprise /
+ *   paid Pro); requests fall back to Gemini 3.8 Flash when the backend rejects it.
+ * - Gemini 4 Carbon (Low / Medium / High) — launched 2026-11-10 (changelog v2.31.0);
+ *   CCA wire IDs follow the family pattern but are UNVERIFIED against a live listing,
+ *   so requests fall back through Argon to Gemini 3.8 Flash when rejected.
+ * - Gemini 4 Hydrogen (Low / Medium / High / xHigh) — launched 2026-11-12; the four
+ *   SKUs incl. the new `-xhigh` tier were observed in live discovery (oh-my-pi 7c74c203,
+ *   opencodex #8644 2026-11-13). Falls back through Carbon → Argon → 3.8 Flash.
  * - Gemini 3.8 Flash (Low / Medium / High)
- * - Gemini 3.7 Flash (Low / Medium / High)
- * - Gemini 3.6 Flash (Low / Medium / High)
+ * - Gemini 3.7 Flash (Low / Medium / High) — still served, single `gemini-3.7-flash-tiered`
+ *   wire id on newer discovery payloads; Enterprise-only per the 2026-11 models doc.
+ * - Gemini 3.6 Flash (Low / Medium / High) — Enterprise-only; effectively absent from CCA
+ *   for non-Enterprise accounts since 3.7 shipped, but kept selectable for entitled ones.
  * - Gemini 3.1 Pro (Low / High)
- * - Claude Sonnet 4.6 (Thinking)
- * - Claude Opus 4.6 (Thinking)
  * - Claude Opus 5.5 (Low / Medium / High)
  * - Claude Sonnet 5.5 (Low / Medium / High)
- * - GPT-OSS 120B (Medium)
  *
- * Gemini 4 Argon is inferred from runtime ids referenced by Antigravity IDE 2.23.0
- * (`gemini-4-argon-{low,medium,high}`); it is not yet confirmed against a live
- * `fetchAvailableModels` or `agy models` listing, so its limits and pricing are
- * provisional and requests fall back to Gemini 3.8 Flash when the backend rejects it.
- *
- * Gemini 3.5 Flash is intentionally omitted from the selectable catalog; the
- * stream handler recognizes the reported retirement notice for old model IDs.
- * Pi exposes the remaining models as public IDs and surfaces the exact thinking
- * levels advertised by the backend for each model.
+ * Removed 2026-11-18 per Google's models doc: `claude-opus-4-6-thinking`,
+ * `claude-sonnet-4-6`, `gpt-oss-120b-medium`. They are no longer selectable; the stream
+ * handler still recognizes their retirement notices, and pinned runtime overrides to the
+ * old wire IDs keep working until the backend drops them.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
+  "gemini-4-hydrogen": {
+    off: "gemini-4-hydrogen-low",
+    routing: {
+      minimal: "gemini-4-hydrogen-low",
+      low: "gemini-4-hydrogen-low",
+      medium: "gemini-4-hydrogen-medium",
+      high: "gemini-4-hydrogen-high",
+      xhigh: "gemini-4-hydrogen-xhigh",
+    },
+    defaultRequestId: "gemini-4-hydrogen-low",
+  },
+  "gemini-4-carbon": {
+    off: "gemini-4-carbon-low",
+    routing: {
+      minimal: "gemini-4-carbon-low",
+      low: "gemini-4-carbon-low",
+      medium: "gemini-4-carbon-medium",
+      high: "gemini-4-carbon-high",
+      xhigh: "gemini-4-carbon-high",
+    },
+    defaultRequestId: "gemini-4-carbon-low",
+  },
   "gemini-4-argon": {
     off: "gemini-4-argon-low",
     routing: {
@@ -135,6 +160,8 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
     },
     defaultRequestId: "gemini-3.6-flash-low",
   },
+  // Removed-from-catalog IDs keep their routing so a pinned frontend override still
+  // resolves to the right wire id until the backend drops the model (2026-11-18).
   "gpt-oss-120b": {
     off: "gpt-oss-120b-medium",
     routing: {
@@ -152,6 +179,16 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
  * Requesting more than these limits returns a 400 Bad Request from the API.
  */
 export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  // Gemini 4 family: 3.8-tier value as provisional estimate; no verified 4-family limit.
+  "gemini-4-carbon": 65536,
+  "gemini-4-carbon-low": 65536,
+  "gemini-4-carbon-medium": 65536,
+  "gemini-4-carbon-high": 65536,
+  "gemini-4-hydrogen": 65536,
+  "gemini-4-hydrogen-low": 65536,
+  "gemini-4-hydrogen-medium": 65536,
+  "gemini-4-hydrogen-high": 65536,
+  "gemini-4-hydrogen-xhigh": 65536,
   // Provisional: family fallback, not a verified Gemini 4 limit.
   "gemini-4-argon": 65536,
   "gemini-4-argon-low": 65536,
@@ -205,7 +242,6 @@ const geminiFlashCost = { input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite:
 const geminiProCost = { input: 1.25, output: 5.0, cacheRead: 0.3125, cacheWrite: 1.25 };
 const claudeSonnetCost = { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.75 };
 const claudeOpusCost = { input: 15.0, output: 75.0, cacheRead: 1.5, cacheWrite: 18.75 };
-const gptOssCost = { input: 0.6, output: 2.4, cacheRead: 0.15, cacheWrite: 0.6 };
 
 // A null entry is intentionally hidden by Pi. Do not collapse levels that happen to
 // route to the same runtime ID: the UI must reflect the levels the backend advertises.
@@ -217,6 +253,15 @@ const thinkingLevelMaps = {
     medium: "medium",
     high: "high",
     xhigh: null,
+    max: null,
+  },
+  lowMediumHighXhigh: {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
     max: null,
   },
   lowHigh: {
@@ -293,11 +338,36 @@ function claude55Models(family: Claude55Family): ProviderModelConfig[] {
 /** Selectable provider models; effort variants share public IDs where routing supports them. */
 export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
   {
-    // Provisional: cost (Pro-tier estimate), context window, and max output are unverified.
+    // Wire IDs verified against live discovery (2026-10-14); cost/context are
+    // Pro-tier estimates and the output cap is the 3.8-tier value.
     id: "gemini-4-argon",
     name: "Gemini 4 Argon (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    input: ["text", "image"],
+    cost: geminiProCost,
+    contextWindow: 1048576,
+    maxTokens: 65536,
+  },
+  {
+    // Launched 2026-11-10. Carbon-specific cost/context/output are unverified;
+    // values reuse the Gemini 4 family estimates.
+    id: "gemini-4-carbon",
+    name: "Gemini 4 Carbon (Antigravity)",
+    reasoning: true,
+    thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    input: ["text", "image"],
+    cost: geminiProCost,
+    contextWindow: 1048576,
+    maxTokens: 65536,
+  },
+  {
+    // Launched 2026-11-12 with the backend's first -xhigh tier. Hydrogen-specific
+    // cost/context/output are unverified; values reuse the Gemini 4 family estimates.
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen (Antigravity)",
+    reasoning: true,
+    thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
     input: ["text", "image"],
     cost: geminiProCost,
     contextWindow: 1048576,
@@ -333,28 +403,8 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     contextWindow: 1048576,
     maxTokens: 65536,
   },
-  {
-    id: "claude-opus-4-6",
-    name: "Claude Opus 4.6 (Antigravity)",
-    reasoning: true,
-    thinkingLevelMap: thinkingLevelMaps.thinking,
-    input: ["text", "image"],
-    cost: claudeOpusCost,
-    contextWindow: 250000,
-    maxTokens: 64000,
-  },
   ...claude55Models("opus"),
   ...claude55Models("sonnet"),
-  {
-    id: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6 (Antigravity)",
-    reasoning: true,
-    thinkingLevelMap: thinkingLevelMaps.thinking,
-    input: ["text", "image"],
-    cost: claudeSonnetCost,
-    contextWindow: 200000,
-    maxTokens: 64000,
-  },
   {
     id: "gemini-3.1-pro",
     name: "Gemini 3.1 Pro (Antigravity)",
@@ -364,16 +414,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     cost: geminiProCost,
     contextWindow: 1048576,
     maxTokens: 65535,
-  },
-  {
-    id: "gpt-oss-120b",
-    name: "GPT-OSS 120B (Antigravity)",
-    reasoning: true,
-    thinkingLevelMap: thinkingLevelMaps.medium,
-    input: ["text"],
-    cost: gptOssCost,
-    contextWindow: 131072,
-    maxTokens: 32768,
   },
 ];
 
@@ -414,6 +454,21 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
  * provide a fallback runtime model ID (e.g. Gemini 3.6 Flash) to maintain availability.
  */
 export function getFallbackRuntimeModel(runtimeModel: string, effort?: string): string | undefined {
+  // Only Hydrogen advertises an -xhigh wire id; Carbon and Argon top out at -high,
+  // so a Hydrogen xHigh fallback must downgrade the tier when it crosses families.
+  const carbonTarget = runtimeModel.startsWith("gemini-4-hydrogen-")
+    ? runtimeModel.replace("gemini-4-hydrogen-", "gemini-4-carbon-").replace(/-xhigh$/, "-high")
+    : undefined;
+  if (runtimeModel === "gemini-4-hydrogen") {
+    return "gemini-4-carbon-low";
+  }
+  if (carbonTarget) return carbonTarget;
+  if (runtimeModel === "gemini-4-carbon") {
+    return "gemini-4-argon-low";
+  }
+  if (runtimeModel.startsWith("gemini-4-carbon-")) {
+    return runtimeModel.replace("gemini-4-carbon-", "gemini-4-argon-").replace(/-xhigh$/, "-high");
+  }
   if (runtimeModel === "gemini-4-argon") {
     return "gemini-3.8-flash-low";
   }

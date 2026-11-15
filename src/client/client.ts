@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Platform } from "../types/enums.js";
 import {
   getCurrentAvailableModels,
@@ -64,8 +64,11 @@ export function endpointCandidates(preferredEndpoint?: string): string[] {
   return ENDPOINT_FALLBACKS;
 }
 
-// Cloud Code rejects newer models (e.g. Gemini 4 Argon) for clients below 2.23.0.
-const DEFAULT_ANTIGRAVITY_VERSION = "2.23.0";
+// Cloud Code rejects newer models (e.g. Gemini 4 Argon) for clients below 2.23.0, and a
+// stale identity silently gets a REDUCED catalog from discovery (no error): control-plane
+// requests sent as antigravity/1.11.3 returned fewer models (codex2api e3d59f9). Track the
+// shipping client — oh-my-pi pinned 2.32.1 on 2026-11-14 for the same reason.
+const DEFAULT_ANTIGRAVITY_VERSION = "2.32.1";
 const DEFAULT_ANTIGRAVITY_CL = "963137146";
 
 function defaultUserAgent(): string {
@@ -89,6 +92,10 @@ export function antigravityHeaders(token: string): Record<string, string> {
     Accept: "text/event-stream",
     "User-Agent": antigravityEnv("USER_AGENT") || defaultUserAgent(),
     "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+    // Per-request trace/request ids match the shipping client (oh-my-pi #19279,
+    // 2026-11-14): requests without them were served the reduced catalog.
+    "x-cloudaicompanion-trace-id": randomUUID(),
+    "X-Aicode-Request-Id": randomUUID(),
     "Client-Metadata": JSON.stringify({
       ideType: "ANTIGRAVITY",
       platform,
