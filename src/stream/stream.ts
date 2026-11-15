@@ -134,6 +134,27 @@ export function isPlanQuotaError(status: number | undefined, text: string): bool
 }
 
 /**
+ * Transient 429s may carry a server-provided Retry-After (seconds or HTTP-date, CPA
+ * issue #6646). Trust it over the local backoff when it is short enough to be worth a
+ * retry; a longer value is a cooldown that will not clear inside this loop.
+ */
+export const THROTTLE_RETRY_AFTER_CAP_SECONDS = 60;
+
+export function parseRetryAfterSeconds(raw: string | null | undefined): number | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+  }
+  const date = Date.parse(trimmed);
+  if (Number.isNaN(date)) return undefined;
+  const seconds = Math.round((date - Date.now()) / 1000);
+  return seconds >= 0 ? seconds : 0;
+}
+
+/**
  * pi chooses auto-retry by matching the error text (`isRetryableAssistantError`) and
  * checks account-limit phrases like "quota exceeded" BEFORE retryable ones. Google's
  * transient per-minute 429 body starts with exactly that phrase, so quoting it verbatim
@@ -737,6 +758,18 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
     if (/verify your account|VALIDATION_REQUIRED/i.test(msg)) {
       return formatAccountValidation({ message: msg });
     }
+    // Google is actively enforcing third-party OAuth use (403 PERMISSION_DENIED,
+    // reason TOS_VIOLATION; the appeal copy names "third party software"). The reason
+    // lives in error.details, which jsonOrTextError drops — match the raw body. Retries,
+    // re-login and model switches do not clear it, and the account itself is at risk.
+    if (/TOS_VIOLATION|third[- ]party (software|tools|services|clients?)/i.test(text)) {
+      return (
+        "Antigravity flagged this account for third-party access (TOS_VIOLATION). " +
+        "Retries and re-login will not clear it; further use may get the account suspended. " +
+        "Next: stop using third-party clients on this account and appeal through Google support. " +
+        `Backend said: ${msg}`
+      );
+    }
     if (/permission|forbidden|access/i.test(msg)) {
       return "Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.";
     }
@@ -1150,8 +1183,22 @@ export function streamAntigravity(
               if (isPlanQuotaError(response.status, lastText)) break;
               // Every other 429 is a transient throttle. Back off on the same endpoint
               // instead of hopping regions, which multiplies load on a throttled account.
-              if (response.status === 429 && throttleAttempt < THROTTLE_MAX_RETRIES) {
-                await sleep(throttleBaseDelayMs() * 2 ** throttleAttempt, opts.signal);
+              // Honor a server Retry-After when it is short; a longer one is a cooldown
+              // that will not clear inside this loop, so burn no attempts on it.
+              const retryAfterSeconds = parseRetryAfterSeconds(
+                response.headers.get("retry-after"),
+              );
+              const retryable =
+                response.status === 429 &&
+                throttleAttempt < THROTTLE_MAX_RETRIES &&
+                (retryAfterSeconds === undefined ||
+                  retryAfterSeconds <= THROTTLE_RETRY_AFTER_CAP_SECONDS);
+              if (retryable) {
+                const delayMs =
+                  retryAfterSeconds !== undefined
+                    ? retryAfterSeconds * 1000
+                    : throttleBaseDelayMs() * 2 ** throttleAttempt;
+                await sleep(delayMs, opts.signal);
                 throttleAttempt += 1;
                 continue;
               }

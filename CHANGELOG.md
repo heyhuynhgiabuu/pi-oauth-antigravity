@@ -18,6 +18,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Gemini 4 family (Hydrogen → Carbon → Argon → 3.8 Flash), with an xHigh tier
   downgrade at each family boundary since only Hydrogen advertises `-xhigh`.
 - Fresh `x-cloudaicompanion-trace-id` / `X-Aicode-Request-Id` headers on every request.
+- **403 `TOS_VIOLATION` is recognized and surfaces account-risk advice** instead of the
+  generic "try another model, re-login" line. Google is actively enforcing third-party
+  OAuth use (the appeal copy names "third party software"); the reason lives in
+  `error.details`, which the old message path dropped, so a flagged account now gets told
+  that retries and re-login will not clear it and that further use risks suspension.
+- **Server `Retry-After` is honored on transient 429s** (seconds or HTTP-date form,
+  capped at 60s). A longer `Retry-After` is a cooldown that cannot clear inside the
+  retry loop (CPA issue #6646), so no attempts are burned on it and the backend's own
+  reset note is surfaced. Without the header the 2s/4s backoff is unchanged.
+- Claude Opus 5.5 / Sonnet 5.5 are documented as officially served (2026-11 models doc,
+  live discovery since 2026-10-03); the listed output/context figures remain same-family
+  estimates until Google publishes 5.5-specific numbers.
+
+### Added
+
+- **Gemini 4 Carbon** (`gemini-4-carbon-{low,medium,high}`, launched 2026-11-10) and
+  **Gemini 4 Hydrogen** (`gemini-4-hydrogen-{low,medium,high,xhigh}`, launched 2026-11-12 —
+  the backend's first `-xhigh` effort tier). Carbon/Hydrogen wire ids follow the family
+  pattern and are UNVERIFIED against a live listing; rejected requests fall back through
+  the Gemini 4 family (Hydrogen → Carbon → Argon → 3.8 Flash), with an xHigh tier
+  downgrade at each family boundary since only Hydrogen advertises `-xhigh`.
+- Fresh `x-cloudaicompanion-trace-id` / `X-Aicode-Request-Id` headers on every request.
 
 ### Changed
 

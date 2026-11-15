@@ -58,7 +58,9 @@ prefer the official Antigravity IDE/CLI when possible, and don't say you weren't
 
 † Gemini 4 family: Argon wire ids verified against live discovery (2026-10-14); Carbon/Hydrogen wire ids follow the family pattern but are UNVERIFIED against a live listing. Limits and pricing are same-family estimates; a rejected request falls back to the previous Gemini 4 model, then Gemini 3.8 Flash.
 
-\* Provisional same-family estimates only; Claude 5.5 backend output/context limits have not been verified.
+\* Claude Opus 5.5 / Sonnet 5.5 are officially served (2026-11 models doc, live discovery
+since 2026-10-03); the listed output/context figures stay same-family estimates until
+Google publishes 5.5-specific numbers.
 
 The request identity tracks the shipping client (`antigravity/hub/2.32.1`) and every call
 sends fresh `x-cloudaicompanion-trace-id` / `X-Aicode-Request-Id` headers — a stale client

@@ -312,8 +312,10 @@ const claude55ThinkingLevelMaps: Record<Claude55Tier, ThinkingLevelMap> = {
 };
 
 /**
- * Use existing same-family values as provisional estimates only; 5.5-specific
- * cost, context-window, and output-token metadata has not been verified.
+ * Claude Opus 5.5 and Sonnet 5.5 are officially served by Antigravity (confirmed in the
+ * 2026-11 models doc and observed in live discovery since 2026-10-03). The per-tier cost,
+ * context window, and output caps below remain same-family estimates — Google does not
+ * publish 5.5-specific numbers — but the models themselves are first-class.
  */
 function claude55Models(family: Claude55Family): ProviderModelConfig[] {
   const familyName = family === "opus" ? "Opus" : "Sonnet";

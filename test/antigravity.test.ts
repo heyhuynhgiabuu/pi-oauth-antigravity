@@ -21,6 +21,7 @@ import {
 	extractAccountValidation,
 	isPlanQuotaError,
 	mapStopReason,
+	parseRetryAfterSeconds,
 	streamAntigravity,
 	streamResponse,
 } from "../src/stream/stream.js";
@@ -993,6 +994,87 @@ test("plan-quota 429 fails fast without retries or endpoint hopping", async () =
 			);
 		},
 	);
+});
+
+test("transient 429 honors a short Retry-After and retries the same endpoint", async () => {
+	const sessionsFile = join(tmpdir(), `ag-retry-after-${Date.now()}.json`);
+	await withEnvAsync(
+		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
+		async () => {
+			await withFetchStub(
+				(_url, call) =>
+					call === 1
+						? new Response(JSON.stringify({ error: { code: 429, message: "RESOURCE_EXHAUSTED" } }), {
+								status: 429,
+								headers: { "content-type": "application/json", "retry-after": "0" },
+							})
+						: new Response(STREAM_OK_SSE, {
+								status: 200,
+								headers: { "content-type": "text/event-stream" },
+							}),
+				async (calls) => {
+					const message = await streamAntigravityOnce("-4545454545");
+					assert.equal(calls.length, 2);
+					assert.notEqual(message.stopReason, "error");
+				},
+			);
+		},
+	);
+});
+
+test("a long Retry-After cooldown burns no retry attempts", async () => {
+	const sessionsFile = join(tmpdir(), `ag-retry-after-long-${Date.now()}.json`);
+	await withEnvAsync(
+		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
+		async () => {
+			await withFetchStub(
+				() =>
+					new Response(JSON.stringify({ error: { code: 429, message: "RESOURCE_EXHAUSTED" } }), {
+						status: 429,
+						headers: { "content-type": "application/json", "retry-after": "3600" },
+					}),
+				async (calls) => {
+					const message = await streamAntigravityOnce("-4646464646");
+					assert.equal(calls.length, 1);
+					assert.equal(message.stopReason, "error");
+					assert.match(message.errorMessage ?? "", /Rate limited by Antigravity/);
+				},
+			);
+		},
+	);
+});
+
+test("parseRetryAfterSeconds accepts seconds and HTTP dates, refuses garbage", () => {
+	assert.equal(parseRetryAfterSeconds("120"), 120);
+	assert.equal(parseRetryAfterSeconds(" 0 "), 0);
+	assert.equal(parseRetryAfterSeconds(null), undefined);
+	assert.equal(parseRetryAfterSeconds(""), undefined);
+	assert.equal(parseRetryAfterSeconds("soon"), undefined);
+	const inAnHour = new Date(Date.now() + 3_600_000).toUTCString();
+	const parsed = parseRetryAfterSeconds(inAnHour);
+	assert.ok(parsed !== undefined && parsed > 3500 && parsed <= 3600);
+	assert.equal(parseRetryAfterSeconds(new Date(Date.now() - 60_000).toUTCString()), 0);
+});
+
+test("friendly 403 TOS_VIOLATION warns about account risk instead of re-login advice", () => {
+	const body = JSON.stringify({
+		error: {
+			code: 403,
+			message: "PERMISSION_DENIED",
+			status: "PERMISSION_DENIED",
+			details: [
+				{
+					"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+					reason: "TOS_VIOLATION",
+					metadata: { violation: "Using third party software, tools, or services to access Antigravity" },
+				},
+			],
+		},
+	});
+	const message = friendlyAntigravityError(403, body);
+	assert.match(message, /TOS_VIOLATION/);
+	assert.match(message, /suspended/);
+	assert.doesNotMatch(message, /re-login, or use an account with access/);
 });
 
 test("5xx still falls back to the next endpoint", async () => {
