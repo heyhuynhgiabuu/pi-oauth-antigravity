@@ -17,6 +17,11 @@ export const PROVIDER_NAME = "Antigravity";
  * - Gemini 4 Carbon (Low / Medium / High) — launched 2026-11-10 (changelog v2.31.0);
  *   CCA wire IDs follow the family pattern but are UNVERIFIED against a live listing,
  *   so requests fall back through Argon to Gemini 3.8 Flash when rejected.
+ * - Gemini 4 Neon (Low / Medium / High / xHigh) — launched 2026-11-18 as the Antigravity
+ *   default model, positioned between Hydrogen and Carbon. The four tiers and the
+ *   `gemini-4-neon-xhigh` CLI form come from the Antigravity models doc; the other wire IDs
+ *   follow the family pattern and are UNVERIFIED against a live listing. Falls back to
+ *   Hydrogen at the same tier (both advertise -xhigh).
  * - Gemini 4 Hydrogen (Low / Medium / High / xHigh) — launched 2026-11-12; the four
  *   SKUs incl. the new `-xhigh` tier were observed in live discovery (oh-my-pi 7c74c203,
  *   opencodex #8644 2026-11-13). Falls back through Carbon → Argon → 3.8 Flash.
@@ -35,6 +40,17 @@ export const PROVIDER_NAME = "Antigravity";
  * old wire IDs keep working until the backend drops them.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
+  "gemini-4-neon": {
+    off: "gemini-4-neon-low",
+    routing: {
+      minimal: "gemini-4-neon-low",
+      low: "gemini-4-neon-low",
+      medium: "gemini-4-neon-medium",
+      high: "gemini-4-neon-high",
+      xhigh: "gemini-4-neon-xhigh",
+    },
+    defaultRequestId: "gemini-4-neon-low",
+  },
   "gemini-4-hydrogen": {
     off: "gemini-4-hydrogen-low",
     routing: {
@@ -184,6 +200,12 @@ export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "gemini-4-carbon-low": 65536,
   "gemini-4-carbon-medium": 65536,
   "gemini-4-carbon-high": 65536,
+  // Neon: 65,536 sync max output per the AI Studio model page.
+  "gemini-4-neon": 65536,
+  "gemini-4-neon-low": 65536,
+  "gemini-4-neon-medium": 65536,
+  "gemini-4-neon-high": 65536,
+  "gemini-4-neon-xhigh": 65536,
   "gemini-4-hydrogen": 65536,
   "gemini-4-hydrogen-low": 65536,
   "gemini-4-hydrogen-medium": 65536,
@@ -240,6 +262,9 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 
 const geminiFlashCost = { input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite: 0.1 };
 const geminiProCost = { input: 1.25, output: 5.0, cacheRead: 0.3125, cacheWrite: 1.25 };
+// Neon input/output are Google's published $3 / $15 per 1M; cache rates are unpublished
+// and reuse the Pro-tier ratios (read 25%, write 100% of input).
+const geminiNeonCost = { input: 3.0, output: 15.0, cacheRead: 0.75, cacheWrite: 3.0 };
 const claudeSonnetCost = { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.75 };
 const claudeOpusCost = { input: 15.0, output: 75.0, cacheRead: 1.5, cacheWrite: 18.75 };
 
@@ -364,6 +389,19 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     maxTokens: 65536,
   },
   {
+    // Launched 2026-11-18; wire id `gemini-4-neon-xhigh` matches CLIProxyAPI's registry
+    // entry (2026-11-19), which lists the family's 1M context. Antigravity's models doc
+    // says 512K — untested either way; the 1M figure matches the other Gemini 4 rows.
+    id: "gemini-4-neon",
+    name: "Gemini 4 Neon (Antigravity)",
+    reasoning: true,
+    thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
+    input: ["text", "image"],
+    cost: geminiNeonCost,
+    contextWindow: 1048576,
+    maxTokens: 65536,
+  },
+  {
     // Launched 2026-11-12 with the backend's first -xhigh tier. Hydrogen-specific
     // cost/context/output are unverified; values reuse the Gemini 4 family estimates.
     id: "gemini-4-hydrogen",
@@ -456,7 +494,14 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
  * provide a fallback runtime model ID (e.g. Gemini 3.6 Flash) to maintain availability.
  */
 export function getFallbackRuntimeModel(runtimeModel: string, effort?: string): string | undefined {
-  // Only Hydrogen advertises an -xhigh wire id; Carbon and Argon top out at -high,
+  // Neon and Hydrogen share the same four tiers, so Neon falls back tier-for-tier.
+  if (runtimeModel === "gemini-4-neon") {
+    return "gemini-4-hydrogen-low";
+  }
+  if (runtimeModel.startsWith("gemini-4-neon-")) {
+    return runtimeModel.replace("gemini-4-neon-", "gemini-4-hydrogen-");
+  }
+  // Only Neon and Hydrogen advertise an -xhigh wire id; Carbon and Argon top out at -high,
   // so a Hydrogen xHigh fallback must downgrade the tier when it crosses families.
   const carbonTarget = runtimeModel.startsWith("gemini-4-hydrogen-")
     ? runtimeModel.replace("gemini-4-hydrogen-", "gemini-4-carbon-").replace(/-xhigh$/, "-high")

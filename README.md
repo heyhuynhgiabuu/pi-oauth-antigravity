@@ -23,6 +23,7 @@ Google Antigravity OAuth provider extension for [Pi](https://pi.dev). Connects P
 
 | Public Model ID | Backend Wire ID | Max Output | Context Window |
 | :--- | :--- | :--- | :--- |
+| `antigravity/gemini-4-neon` | `gemini-4-neon-{low,medium,high,xhigh}`† | 65,536 | 1,048,576 |
 | `antigravity/gemini-4-hydrogen` | `gemini-4-hydrogen-{low,medium,high,xhigh}`† | 65,536† | 1,048,576† |
 | `antigravity/gemini-4-carbon` | `gemini-4-carbon-{low,medium,high}`† | 65,536† | 1,048,576† |
 | `antigravity/gemini-4-argon` | `gemini-4-argon-{low,medium,high}` | 65,536† | 1,048,576† |
@@ -38,10 +39,15 @@ Google Antigravity OAuth provider extension for [Pi](https://pi.dev). Connects P
 | `antigravity/claude-sonnet-5-5-medium` | `claude-sonnet-5-5-medium` | 64,000* | 200,000* |
 | `antigravity/claude-sonnet-5-5-high` | `claude-sonnet-5-5-high` | 64,000* | 200,000* |
 
-Hydrogen (2026-11-12) is the first model with an `-xhigh` effort tier; Carbon (2026-11-10)
-and Argon (2026-10-13) top out at High. Argon/Carbon/Hydrogen are entitlement-gated
-(Ultra / Enterprise / paid Pro); a rejected request falls back through the Gemini 4
-family to Gemini 3.8 Flash.
+Neon (2026-11-18, Antigravity's default model) and Hydrogen (2026-11-12) have an `-xhigh`
+effort tier; Carbon (2026-11-10) and Argon (2026-10-13) top out at High. The Gemini 4
+models are entitlement-gated (Ultra / Enterprise / paid Pro); a rejected or throttled
+request falls back through the Gemini 4 family (Neon → Hydrogen → Carbon → Argon) to
+Gemini 3.8 Flash. A transient 429 honors the server's wait hint from the `Retry-After`
+header or the body's `RetryInfo` detail before moving to the fallback model; an explicit
+`QUOTA_EXHAUSTED` reason fails fast like plan quota. Neon's wire id matches
+CLIProxyAPI's registry; its listed context (1M) comes from the same registry —
+Antigravity's own doc says 512K, untested either way.
 
 `claude-opus-4-6-thinking`, `claude-sonnet-4-6` and `gpt-oss-120b-medium` were removed by
 Google on **2026-11-18** and are no longer selectable; pinned overrides to their wire ids
@@ -49,6 +55,23 @@ still resolve until the backend drops them, and their retirement notices are det
 surfaced as errors instead of assistant text.
 
 ### Third-party OAuth is a ToS risk
+
+Google also fingerprints third-party clients by request content: requests whose system
+text or tool descriptions carry the harness name are answered with 429
+RESOURCE_EXHAUSTED before quota is even considered. The extension scrubs its name from
+system instructions and tool descriptions it authors (message text is left untouched).
+On lanes that enforce a small per-request input budget, set `ANTIGRAVITY_COMPACT_PROMPT=1`
+to run with a bundled compact preamble — see the changelog for the verified scope.
+
+On accounts whose requests are limited to a small input budget (observed ~500-750 input
+tokens per request on the shared consumer lane, tightening after 429 bursts), the full
+default Pi system prompt (~4k tokens) cannot fit at all. Set
+`ANTIGRAVITY_COMPACT_PROMPT=1` to swap the prompt preamble for a bundled ~1.9KB compact
+one and drop the fingerprint-heavy `<docs>`/`<tools>`/`<rules>` sections — Pi's
+`<project_context>` (AGENTS.md), `<skills>`, and `<cwd>` sections are preserved, so
+AGENTS.md rules and skills keep working. Point the variable at a file path to supply
+your own preamble instead. Skills keep working normally: listing them is a system
+section, and reading a skill's SKILL.md is a runtime read-tool call.
 
 Google's enforcement against third-party Antigravity OAuth clients is active: appeal forms
 name "using third party software to access Antigravity", and 403 `PERMISSION_DENIED /

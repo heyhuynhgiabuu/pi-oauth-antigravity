@@ -1,6 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,7 +21,10 @@ import {
 	extractAccountValidation,
 	isPlanQuotaError,
 	mapStopReason,
+	parseGoogleDurationSeconds,
+	parseRetryAfterFromBody,
 	parseRetryAfterSeconds,
+	scrubAgentName,
 	streamAntigravity,
 	streamResponse,
 } from "../src/stream/stream.js";
@@ -53,6 +56,12 @@ import {
 	resetAntigravitySessionMemory,
 	sanitizeText,
 } from "../src/utils/util.js";
+import {
+	applyCompactSystemPrompt,
+	COMPACT_SYSTEM_PROMPT,
+	compactSystemPromptOverride,
+	replaceSystemPreamble,
+} from "../src/prompt/compact.js";
 import { getApiKey } from "../src/auth/index.js";
 import {
 	assertSafeAspectRatio,
@@ -190,9 +199,10 @@ function errorResponse(status: number, message: string): Response {
 async function streamAntigravityOnce(
 	sessionId = "-4242424242",
 	signal?: AbortSignal,
+	modelId = "gemini-3.8-flash",
 ): Promise<{ stopReason: string; errorMessage?: string }> {
 	const stream = streamAntigravity(
-		fakeModel("gemini-3.8-flash"),
+		fakeModel(modelId),
 		normalizeContext({
 			systemPrompt: "You are pi.",
 			messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -270,7 +280,7 @@ test("transcript adapter replays normalized system deltas", () => {
 
 test("model catalog registers all Claude 5.5 tiers with per-model thinking maps", () => {
 	assert.equal(PROVIDER_ID, "antigravity");
-	assert.equal(ANTIGRAVITY_MODELS.length, 13);
+	assert.equal(ANTIGRAVITY_MODELS.length, 14);
 	const ids = ANTIGRAVITY_MODELS.map((m) => m.id).sort();
 	assert.deepEqual(ids, [
 		"claude-opus-5-5-high",
@@ -286,6 +296,7 @@ test("model catalog registers all Claude 5.5 tiers with per-model thinking maps"
 		"gemini-4-argon",
 		"gemini-4-carbon",
 		"gemini-4-hydrogen",
+		"gemini-4-neon",
 	]);
 	for (const model of ANTIGRAVITY_MODELS) {
 		assert.ok((model as { thinkingLevelMap?: Record<string, unknown> }).thinkingLevelMap);
@@ -334,6 +345,8 @@ test("effort routing maps public ids to backend runtime ids", () => {
 	assert.equal(getAntigravityRequestModelId("gemini-3.1-pro", "high"), "gemini-pro-agent");
 	assert.equal(getAntigravityRequestModelId("claude-sonnet-4-6", "high"), "claude-sonnet-4-6");
 	// Gemini 4 family: Hydrogen is the only model with an -xhigh wire id.
+	assert.equal(getAntigravityRequestModelId("gemini-4-neon", "xhigh"), "gemini-4-neon-xhigh");
+	assert.equal(getAntigravityRequestModelId("gemini-4-neon", "medium"), "gemini-4-neon-medium");
 	assert.equal(getAntigravityRequestModelId("gemini-4-hydrogen", "xhigh"), "gemini-4-hydrogen-xhigh");
 	assert.equal(getAntigravityRequestModelId("gemini-4-hydrogen", "high"), "gemini-4-hydrogen-high");
 	assert.equal(getAntigravityRequestModelId("gemini-4-carbon", "xhigh"), "gemini-4-carbon-high");
@@ -382,7 +395,157 @@ test("Claude 5.5 tier requests keep their exact runtime model ids", () => {
 	}
 });
 
+test("agent-name scrub clears harness-authored text but keeps message text", async () => {
+	assert.equal(
+		scrubAgentName("You are a coding assistant running inside pi, a coding agent harness."),
+		"You are a coding assistant running inside, a coding agent harness.",
+	);
+	assert.equal(scrubAgentName("Search exact Pi session history"), "Search exact session history");
+	// Path and identifier forms are the shapes Google does not flag — keep them verbatim.
+	assert.equal(scrubAgentName("docs under /.pi/agent"), "docs under /.pi/agent");
+	assert.equal(scrubAgentName("the pi-oauth-antigravity repo"), "the pi-oauth-antigravity repo");
+	assert.equal(scrubAgentName("a pi-task subagent"), "a pi-task subagent");
+	assert.equal(scrubAgentName("an api endpoint and pixel art"), "an api endpoint and pixel art");
+
+	const model = fakeModel("gemini-3.8-flash");
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
+		const built = buildRequest(
+			model,
+			normalizeContext({
+				systemPrompt: "You are a coding assistant running inside pi, a coding agent harness.",
+				messages: [{ role: "user", content: [{ type: "text", text: "look at pi-oauth-antigravity under ~/.pi" }] }],
+				tools: [
+					{ name: "recall", description: "Search exact Pi session history" },
+					{ name: "bash", description: "Run commands via pi's shell" },
+				],
+			} as never),
+			"project-1",
+			{ reasoning: "off" } as never,
+			"gemini-3.8-flash-low",
+		);
+		const systemText = built.request.systemInstruction.parts.map((part) => part.text).join(" ");
+		assert.doesNotMatch(systemText, /\bpi\b/i);
+		assert.match(systemText, /running inside, a coding agent harness/);
+		const declarations = built.request.tools?.[0]?.functionDeclarations ?? [];
+		assert.equal(declarations[0]?.description, "Search exact session history");
+		// Deletion leaves the possessive apostrophe behind; harmless for the model.
+		assert.equal(declarations[1]?.description, "Run commands via 's shell");
+		// Message text keeps the user's own words, including identifier and path forms.
+		const userParts = built.request.contents?.[0]?.parts ?? [];
+		const userText = userParts.map((part) => (typeof part.text === "string" ? part.text : "")).join(" ");
+		assert.match(userText, /pi-oauth-antigravity/);
+		assert.match(userText, /\.pi/);
+	});
+});
+
+test("compact-prompt override replaces the preamble and keeps Pi sections", () => {
+	const rendered = "You are a coding assistant running inside pi.\n\n<tools>\n- read: Read file contents\n</tools>\n\n<project_context>\nAGENTS.md rules\n</project_context>";
+	const replaced = replaceSystemPreamble(rendered, COMPACT_SYSTEM_PROMPT);
+	assert.match(replaced, /^You are a senior software engineer/);
+	assert.match(replaced, /<tools>\n- read: Read file contents\n<\/tools>/);
+	assert.match(replaced, /<project_context>\nAGENTS.md rules\n<\/project_context>/);
+	// Prompts without section tags are replaced entirely.
+	assert.equal(replaceSystemPreamble("plain preamble only", COMPACT_SYSTEM_PROMPT), COMPACT_SYSTEM_PROMPT);
+});
+
+test("applyCompactSystemPrompt swaps the preamble and drops fingerprint-heavy sections", () => {
+	const rendered = [
+		"You are a coding assistant running inside pi.",
+		"",
+		"<tools>",
+		"- read: Read file contents",
+		"</tools>",
+		"",
+		"<rules>",
+		"- Use bash for file operations like ls, rg, find",
+		"</rules>",
+		"",
+		"<docs>",
+		"Pi documentation (read only when the user asks about the harness itself):",
+		"</docs>",
+		"",
+		"<project_context>",
+		"AGENTS.md rules",
+		"</project_context>",
+		"",
+		"<skills>",
+		"skill listings",
+		"</skills>",
+		"",
+		"/current/working/directory",
+	].join("\n");
+	const out = applyCompactSystemPrompt(rendered);
+	assert.match(out, /^You are a senior software engineer/);
+	assert.match(out, /<project_context>\nAGENTS.md rules\n<\/project_context>/);
+	assert.match(out, /<skills>/);
+	assert.doesNotMatch(out, /<docs>/);
+	assert.doesNotMatch(out, /<tools>/);
+	assert.doesNotMatch(out, /<rules>/);
+	assert.doesNotMatch(out, /\bpi\b/i);
+	assert.ok(!out.includes("\n\n\n"));
+});
+
+test("ANTIGRAVITY_COMPACT_PROMPT resolves bundled, file, and missing-path sources", async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
+		assert.equal(compactSystemPromptOverride(), undefined);
+	});
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: "1" }, async () => {
+		assert.equal(compactSystemPromptOverride(), COMPACT_SYSTEM_PROMPT);
+	});
+	const file = join(tmpdir(), `ag-compact-${Date.now()}.md`);
+	writeFileSync(file, "Custom compact preamble.");
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: file }, async () => {
+		assert.equal(compactSystemPromptOverride(), "Custom compact preamble.");
+	});
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: join(tmpdir(), "missing-compact.md") }, async () => {
+		assert.equal(compactSystemPromptOverride(), COMPACT_SYSTEM_PROMPT);
+	});
+});
+
+test("ANTIGRAVITY_COMPACT_PROMPT=1 mirrors the verified --system-prompt composition", async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: "1" }, async () => {
+		const built = buildRequest(
+			fakeModel("gemini-3.8-flash"),
+			normalizeContext({
+				systemPrompt: [
+					"You are a coding assistant running inside pi.",
+					"",
+					"<tools>",
+					"- read: Read file contents",
+					"</tools>",
+					"",
+					"<rules>",
+					"- Use bash for file operations like ls, rg, find",
+					"</rules>",
+					"",
+					"<docs>",
+					"Pi documentation (read only when the user asks about the harness itself):",
+					"</docs>",
+					"",
+					"<project_context>",
+					"AGENTS.md rules",
+					"</project_context>",
+				].join("\n"),
+				messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+			} as never),
+			"project-1",
+			{ reasoning: "off" } as never,
+			"gemini-3.8-flash-low",
+		);
+		const parts = built.request.systemInstruction.parts
+			.map((part) => (typeof part.text === "string" ? part.text : ""))
+			.join("");
+		assert.match(parts, /^You are a senior software engineer/);
+		assert.match(parts, /<project_context>\nAGENTS.md rules\n<\/project_context>/);
+		assert.doesNotMatch(parts, /<docs>|<tools>|<rules>/);
+		assert.doesNotMatch(parts, /running inside/);
+	});
+});
+
 test("fallback runtime model covers next-gen gemini only", () => {
+	assert.equal(getFallbackRuntimeModel("gemini-4-neon-xhigh"), "gemini-4-hydrogen-xhigh");
+	assert.equal(getFallbackRuntimeModel("gemini-4-neon-medium"), "gemini-4-hydrogen-medium");
+	assert.equal(getFallbackRuntimeModel("gemini-4-neon"), "gemini-4-hydrogen-low");
 	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen-xhigh"), "gemini-4-carbon-high");
 	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen-high"), "gemini-4-carbon-high");
 	assert.equal(getFallbackRuntimeModel("gemini-4-hydrogen"), "gemini-4-carbon-low");
@@ -732,7 +895,8 @@ test("mapStopReason maps backend finish reasons", () => {
 	assert.equal(mapStopReason(undefined), "stop");
 });
 
-test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", () => {
+test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
 	const model = fakeModel("gemini-3.7-flash");
 	const request = buildRequest(
 		model,
@@ -761,7 +925,8 @@ test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", () 
 	assert.equal(request.requestType, "agent");
 	assert.equal(request.request.sessionId, "sess-42");
 	assert.match(request.requestId, /^agent\//);
-	assert.deepEqual(request.request.systemInstruction.parts, [{ text: "You are pi." }]);
+	// The agent-name scrub rewrites harness-authored system text (see the scrub test below).
+	assert.deepEqual(request.request.systemInstruction.parts, [{ text: "You are ." }]);
 	assert.equal(request.request.generationConfig?.thinkingConfig?.thinkingLevel, "HIGH");
 	assert.equal(request.request.generationConfig?.maxOutputTokens, 65536);
 	assert.equal(request.request.toolConfig?.functionCallingConfig.mode, "VALIDATED");
@@ -775,6 +940,7 @@ test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", () 
 	assert.deepEqual(schema.required, ["path"]);
 	assert.equal(schema.additionalProperties, undefined);
 	assert.deepEqual(schema.properties.offset, { type: "number" });
+	});
 });
 
 test("friendly errors are actionable and redacted", () => {
@@ -917,7 +1083,7 @@ test("429 mapping separates plan quota from transient throttles", () => {
 	assert.doesNotMatch(friendlyAntigravityError(429, ""), /Backend said/);
 });
 
-test("transient 429 retries the same endpoint in place and stays retryable", async () => {
+test("transient 429 retries in place, then the fallback model, and stays retryable", async () => {
 	const sessionsFile = join(tmpdir(), `ag-throttle-${Date.now()}.json`);
 	await withEnvAsync(
 		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
@@ -930,9 +1096,10 @@ test("transient 429 retries the same endpoint in place and stays retryable", asy
 					),
 				async (calls) => {
 					const message = await streamAntigravityOnce("-4242424242");
-					// 1 initial attempt + THROTTLE_MAX_RETRIES in-place retries, all on the primary
-					// endpoint: a shared throttle must not be amplified by region hopping.
-					assert.equal(calls.length, 3);
+					// Per runtime model (primary, then fallback): 1 initial attempt +
+					// THROTTLE_MAX_RETRIES in-place retries, all on the primary endpoint: a shared
+					// throttle must not be amplified by region hopping.
+					assert.equal(calls.length, 6);
 					assert.deepEqual([...new Set(calls)], [
 						`${DEFAULT_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`,
 					]);
@@ -940,6 +1107,7 @@ test("transient 429 retries the same endpoint in place and stays retryable", asy
 					// Status + backend text survive, so pi's retry classifier can see the 429.
 					assert.match(message.errorMessage ?? "", /Antigravity API error \(429/);
 					assert.match(message.errorMessage ?? "", /Generate requests per minute per user/);
+					assert.match(message.errorMessage ?? "", /runtimeModel=gemini-3\.7-flash-high/);
 					assert.equal(
 						isRetryableAssistantError({ stopReason: "error", errorMessage: message.errorMessage } as never),
 						true,
@@ -1022,6 +1190,40 @@ test("transient 429 honors a short Retry-After and retries the same endpoint", a
 	);
 });
 
+test("a 429 RetryInfo in the body is honored like a Retry-After header", async () => {
+	const sessionsFile = join(tmpdir(), `ag-retry-info-${Date.now()}.json`);
+	await withEnvAsync(
+		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
+		async () => {
+			await withFetchStub(
+				(_url, call) =>
+					call === 1
+						? new Response(
+								JSON.stringify({
+									error: {
+										code: 429,
+										status: "RESOURCE_EXHAUSTED",
+										details: [
+											{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0s" },
+										],
+									},
+								}),
+								{ status: 429, headers: { "content-type": "application/json" } },
+							)
+						: new Response(STREAM_OK_SSE, {
+								status: 200,
+								headers: { "content-type": "text/event-stream" },
+							}),
+				async (calls) => {
+					const message = await streamAntigravityOnce("-4848484848");
+					assert.equal(calls.length, 2);
+					assert.notEqual(message.stopReason, "error");
+				},
+			);
+		},
+	);
+});
+
 test("a long Retry-After cooldown burns no retry attempts", async () => {
 	const sessionsFile = join(tmpdir(), `ag-retry-after-long-${Date.now()}.json`);
 	await withEnvAsync(
@@ -1035,12 +1237,141 @@ test("a long Retry-After cooldown burns no retry attempts", async () => {
 					}),
 				async (calls) => {
 					const message = await streamAntigravityOnce("-4646464646");
-					assert.equal(calls.length, 1);
+					// One attempt on the primary model, one on the fallback model, no in-place retries.
+					assert.equal(calls.length, 2);
 					assert.equal(message.stopReason, "error");
 					assert.match(message.errorMessage ?? "", /Rate limited by Antigravity/);
 				},
 			);
 		},
+	);
+});
+
+test("a throttled Gemini 4 Hydrogen request is served by the Carbon fallback", async () => {
+	const sessionsFile = join(tmpdir(), `ag-throttle-fallback-${Date.now()}.json`);
+	const requestedModels: string[] = [];
+	await withEnvAsync(
+		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
+		async () => {
+			await withFetchStub(
+				(_url, _call, init) => {
+					const runtimeModel = (JSON.parse(String(init?.body)) as { model: string }).model;
+					requestedModels.push(runtimeModel);
+					return runtimeModel === "gemini-4-hydrogen-medium"
+						? errorResponse(429, "Resource has been exhausted (e.g. check quota).")
+						: new Response(STREAM_OK_SSE, {
+								status: 200,
+								headers: { "content-type": "text/event-stream" },
+							});
+				},
+				async () => {
+					const stream = streamAntigravity(
+						fakeModel("gemini-4-hydrogen"),
+						normalizeContext({
+							systemPrompt: "You are pi.",
+							messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+						} as never),
+						{
+							apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+							sessionId: "-4747474747",
+							reasoning: "medium",
+						} as never,
+					);
+					const message = (await stream.result()) as { stopReason: string };
+					assert.notEqual(message.stopReason, "error");
+					assert.deepEqual(requestedModels, [
+						"gemini-4-hydrogen-medium",
+						"gemini-4-hydrogen-medium",
+						"gemini-4-hydrogen-medium",
+						"gemini-4-carbon-medium",
+					]);
+				},
+			);
+		},
+	);
+});
+
+test("parseGoogleDurationSeconds parses Google RPC durations", () => {
+	assert.equal(parseGoogleDurationSeconds("33s"), 33);
+	assert.equal(parseGoogleDurationSeconds("0s"), 0);
+	assert.equal(parseGoogleDurationSeconds("1.5m"), 90);
+	assert.equal(parseGoogleDurationSeconds("2h"), 7200);
+	assert.equal(parseGoogleDurationSeconds("500ms"), 1);
+	assert.equal(parseGoogleDurationSeconds(" 12s "), 12);
+	assert.equal(parseGoogleDurationSeconds("soon"), undefined);
+	assert.equal(parseGoogleDurationSeconds(""), undefined);
+});
+
+test("parseRetryAfterFromBody reads RetryInfo, quotaResetDelay, and message text", () => {
+	assert.equal(
+		parseRetryAfterFromBody(
+			JSON.stringify({
+				error: {
+					code: 429,
+					status: "RESOURCE_EXHAUSTED",
+					details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "33s" }],
+				},
+			}),
+		),
+		33,
+	);
+	assert.equal(
+		parseRetryAfterFromBody(
+			JSON.stringify({
+				error: {
+					code: 429,
+					details: [
+						{
+							"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+							metadata: { quotaResetDelay: "1m30s" },
+						},
+					],
+				},
+			}),
+		),
+		undefined,
+	); // compound "1m30s" is not a single-unit duration
+	assert.equal(
+		parseRetryAfterFromBody(
+			JSON.stringify({
+				error: {
+					code: 429,
+					details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", metadata: { quotaResetDelay: "90s" } }],
+				},
+			}),
+		),
+		90,
+	);
+	assert.equal(parseRetryAfterFromBody("upstream reverted to retry after 45s"), 45);
+	assert.equal(parseRetryAfterFromBody("Resource has been exhausted (e.g. check quota)."), undefined);
+	assert.equal(parseRetryAfterFromBody(""), undefined);
+});
+
+test("QUOTA_EXHAUSTED / INSUFFICIENT_G1_CREDITS_BALANCE reasons are plan quota", () => {
+	const exhausted = JSON.stringify({
+		error: {
+			code: 429,
+			status: "RESOURCE_EXHAUSTED",
+			details: [
+				{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "QUOTA_EXHAUSTED" },
+			],
+		},
+	});
+	assert.equal(isPlanQuotaError(429, exhausted), true);
+	assert.equal(
+		isPlanQuotaError(
+			429,
+			JSON.stringify({ error: { details: [{ reason: "INSUFFICIENT_G1_CREDITS_BALANCE" }] } }),
+		),
+		true,
+	);
+	assert.equal(isPlanQuotaError(429, "Resource has been exhausted (e.g. check quota)."), false);
+	assert.equal(
+		isPlanQuotaError(
+			429,
+			JSON.stringify({ error: { details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } }),
+		),
+		false,
 	);
 });
 

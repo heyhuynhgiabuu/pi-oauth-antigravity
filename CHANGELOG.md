@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+### Added
+
+- **Gemini 4 Neon** (`gemini-4-neon-{low,medium,high,xhigh}`, launched 2026-11-18, the
+  Antigravity default model). `gemini-4-neon-xhigh` matches CLIProxyAPI's registry entry
+  (2026-11-19); the other wire ids follow the family pattern and are UNVERIFIED against a
+  live listing. Falls back to Hydrogen tier-for-tier. Context and cost follow the
+  registry/AI Studio figures (1M window; $3 / $15 per 1M), though Antigravity's own doc
+  says 512K.
+
+- **Agent-name scrub for harness-authored text.** Google fingerprints third-party agent
+  identity in request content and answers 429 RESOURCE_EXHAUSTED (verified 2026-11-19:
+  a minimal request whose system text contains the harness name is blocked while the
+  identical text without it passes; path/identifier forms like `/.pi/`, `pi-oauth`,
+  `pi-task` are not flagged). `buildRequest` now removes the standalone harness name from
+  system instructions and tool descriptions — never from message text, so file paths and
+  identifiers in the conversation survive. Note: on accounts whose lane enforces a small
+  input budget the full default pi system prompt can still trip Google's broader
+  fingerprint even scrubbed — use `ANTIGRAVITY_COMPACT_PROMPT` (below) in that case.
+
+- **`ANTIGRAVITY_COMPACT_PROMPT` for small-input-budget accounts.** On a g1-pro-tier
+  account served the shared consumer lane, Google enforced ~500-750 input tokens per
+  request (tightening after 429 bursts), so Pi's ~4k-token default system prompt could
+  never fit — through this extension or through a proxy. Set `ANTIGRAVITY_COMPACT_PROMPT=1`
+  to swap the preamble for a bundled ~1.9KB compact one (working style, verification
+  discipline, communication rules) and drop the `<docs>`/`<tools>`/`<rules>` sections,
+  mirroring what Pi sends for a `--system-prompt` run. `<project_context>` (AGENTS.md),
+  `<skills>`, and `<cwd>` are preserved, and skills keep working (the listing is a system
+  section; reading a skill's SKILL.md is a runtime read-tool call). The variable also
+  accepts a file path for a custom preamble.
+
+### Fixed
+
+- **A transient 429 now falls back to the next model instead of failing the turn.**
+  Previously, after the in-place retries ran out, the throttled runtime model (for example
+  `gemini-4-hydrogen-medium`, "Resource has been exhausted") ended the request even though a
+  fallback model (`gemini-4-carbon-medium`) was lined up. Plan quota ("Individual quota
+  reached") still fails fast.
+- **Retry hints are also read from the 429 body, and exhausted-plan reasons fail fast**
+  (mirrors CLIProxyAPI's 429 handling, issue #7565). The wait now comes from the
+  `Retry-After` header, the body's `RetryInfo.retryDelay`, `ErrorInfo
+  metadata.quotaResetDelay`, or a "retry after 33s" message — whichever is present. A 429
+  whose `error.details` carries reason `QUOTA_EXHAUSTED` or
+  `INSUFFICIENT_G1_CREDITS_BALANCE` is treated as plan quota and fails fast instead of
+  burning retries.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added
