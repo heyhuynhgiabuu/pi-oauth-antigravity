@@ -568,6 +568,9 @@ export function getThinkingConfig(
 ): ThinkingWire | undefined {
   if (
     modelId === "gemini-4-argon" ||
+    modelId === "gemini-4-neon" ||
+    modelId === "gemini-4-hydrogen" ||
+    modelId === "gemini-4-carbon" ||
     modelId === "gemini-3.7-flash" ||
     modelId === "gemini-3.6-flash" ||
     modelId === "gemini-3.8-flash"

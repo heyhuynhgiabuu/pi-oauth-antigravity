@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gemini 4 family thought summaries** (neon/hydrogen/carbon): `getThinkingConfig` returned
+  `undefined` for the new models, so requests carried no `thinkingConfig`, the backend
+  returned no thought parts, and nothing displayed. The family now sends
+  `{includeThoughts: true, thinkingLevel: <effort>}` like Argon/3.8 Flash — verified live
+  on `gemini-4-neon` (thought parts + correct answer; simple prompts correctly produce no
+  thoughts because the model does not reason about them).
+
 ## [0.3.0] - 2026-11-19
 
 ### Added

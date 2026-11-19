@@ -587,6 +587,20 @@ test("thinking config per model family", () => {
 		includeThoughts: true,
 		thinkingLevel: "HIGH",
 	});
+	// Gemini 4 family: thought summaries come back only when includeThoughts is set
+	// (verified live on gemini-4-neon 2026-11-19; without it the backend returns none).
+	assert.deepEqual(getThinkingConfig("gemini-4-neon", "medium"), {
+		includeThoughts: true,
+		thinkingLevel: "MEDIUM",
+	});
+	assert.deepEqual(getThinkingConfig("gemini-4-hydrogen", "xhigh"), {
+		includeThoughts: true,
+		thinkingLevel: "HIGH",
+	});
+	assert.deepEqual(getThinkingConfig("gemini-4-carbon", "low"), {
+		includeThoughts: true,
+		thinkingLevel: "LOW",
+	});
 	assert.equal(getThinkingConfig("gemini-3.5-flash", "high"), undefined);
 	assert.equal(getThinkingConfig("claude-sonnet-4-6", "high"), undefined);
 });
