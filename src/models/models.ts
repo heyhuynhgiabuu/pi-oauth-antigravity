@@ -365,10 +365,16 @@ function claude55Models(family: Claude55Family): ProviderModelConfig[] {
 /** Selectable provider models; effort variants share public IDs where routing supports them. */
 
 /**
- * Implicit-cache lifetime measured on the backend (hit observed after a multi-minute
- * subagent detour; Google implicit caching norm is ~5 minutes, refreshed on hit).
- * Declaring it lets Pi's cacheWarming (default "idle") keep the conversation cache warm
- * while the user is away — the missing piece that made post-subagent turns miss.
+ * Implicit-cache lifetime ADOPTED FROM EXTERNAL TELEMETRY, not measured on this
+ * extension's OAuth lane: the official-client dataset over 5,024 turn transitions
+ * (INK-Q/agy-fast, Finding 6) shows prompt-cache miss rates of 1.4% under 60s
+ * inter-turn gaps, 15.9% at 60-180s and 61.5% at 300s. Pi warms at
+ * min(0.9·ttl, ttl−10s), so 60s raises the warm cadence to ~54s (≈5× the requests
+ * that a 300s declaration would spend) — the trade for staying ahead of decay on
+ * lanes that do serve cached tokens. Unverified here: this lane's probe has never
+ * reported cachedContentTokenCount > 0, and one live session recorded a cache hit
+ * after a multi-minute subagent detour — the two observations contradict each other
+ * and remain unresolved.
  */
 const geminiPromptCache = { short: 60 };
 
