@@ -417,6 +417,15 @@ test("agent-name scrub clears harness-authored text but keeps message text", asy
 		scrubAgentName("Tools:\n  - read: read files (see pi docs)\n    continued  line"),
 		"Tools:\n  - read: read files (see docs)\n    continued  line",
 	);
+	// The punctuation collapse is scoped to the deleted span: text without the harness
+	// name is byte-identical (reviewer Major finding — the old global pass rewrote
+	// " :"/" ?"/" ." everywhere).
+	assert.equal(scrubAgentName("x ? y : z"), "x ? y : z");
+	assert.equal(scrubAgentName('Note : hi . ok'), "Note : hi . ok");
+	assert.equal(scrubAgentName('x = {"a" : 1}'), 'x = {"a" : 1}');
+	// A name at line start keeps the line's indentation.
+	assert.equal(scrubAgentName("  pi is great"), "  is great");
+	assert.equal(scrubAgentName("text\n\npi\n\nmore"), "text\n\n\n\nmore");
 
 	const model = fakeModel("gemini-3.8-flash");
 	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined, NOAGY_COMPACT_PROMPT: undefined }, async () => {

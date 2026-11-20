@@ -684,13 +684,18 @@ const AGENT_NAME_PATTERN = /[ \t]*(?<![\w./-])pi(?![\w/-])[ \t]*/gi;
 
 /** Exported for unit tests. */
 export function scrubAgentName(text: string): string {
-  // The match consumes one adjacent space on each side so single-spacing survives;
-  // whitespace beyond the match (markdown indentation, aligned code) is untouched.
-  // The punctuation pass only collapses a space run directly before punctuation —
-  // the remnant of a deleted word before a comma — never a global whitespace flatten.
-  return text
-    .replace(AGENT_NAME_PATTERN, " ")
-    .replace(/[ \t]+([,.;:!?])/g, "$1");
+  // The replacement is scoped to the match: punctuation directly after the deleted
+  // name attaches to the previous word, everything else becomes a single space. A
+  // match at line start keeps the line's indentation. No global whitespace pass —
+  // "x ? y : z" and indented markdown survive byte-for-byte when no name is present.
+  return text.replace(AGENT_NAME_PATTERN, (match, offset: number, full: string) => {
+    if (offset === 0 || full[offset - 1] === "\n") {
+      // Match at line start: the consumed leading run was this line's indentation.
+      return match.match(/^[ \t]+/)?.[0] ?? "";
+    }
+    const after = full.slice(offset + match.length, offset + match.length + 1);
+    return /[,.;:!?]/.test(after) ? "" : " ";
+  });
 }
 
 function scrubRequestAgentName(request: GeminiRequestBody): void {
