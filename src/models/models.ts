@@ -363,6 +363,15 @@ function claude55Models(family: Claude55Family): ProviderModelConfig[] {
 }
 
 /** Selectable provider models; effort variants share public IDs where routing supports them. */
+
+/**
+ * Implicit-cache lifetime measured on the backend (hit observed after a multi-minute
+ * subagent detour; Google implicit caching norm is ~5 minutes, refreshed on hit).
+ * Declaring it lets Pi's cacheWarming (default "idle") keep the conversation cache warm
+ * while the user is away — the missing piece that made post-subagent turns miss.
+ */
+const geminiPromptCache = { short: 300 };
+
 export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
   {
     // Wire IDs verified against live discovery (2026-10-14); cost/context are
@@ -371,6 +380,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 4 Argon (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiProCost,
     contextWindow: 1048576,
@@ -383,6 +393,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 4 Carbon (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiProCost,
     contextWindow: 1048576,
@@ -396,6 +407,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 4 Neon (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiNeonCost,
     contextWindow: 1048576,
@@ -408,6 +420,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 4 Hydrogen (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiProCost,
     contextWindow: 1048576,
@@ -418,6 +431,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 3.8 Flash (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiFlashCost,
     contextWindow: 1048576,
@@ -428,6 +442,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 3.7 Flash (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiFlashCost,
     contextWindow: 1048576,
@@ -438,6 +453,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 3.6 Flash (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiFlashCost,
     contextWindow: 1048576,
@@ -450,6 +466,7 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
     name: "Gemini 3.1 Pro (Antigravity)",
     reasoning: true,
     thinkingLevelMap: thinkingLevelMaps.lowHigh,
+    promptCache: geminiPromptCache,
     input: ["text", "image"],
     cost: geminiProCost,
     contextWindow: 1048576,

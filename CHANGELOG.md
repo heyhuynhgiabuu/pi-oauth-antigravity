@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`promptCache` declared for all Gemini models (`short: 300`).** Pi's cache warming
+  (default `cacheWarming: "idle"`) only re-sends prompts for models that declare a cache
+  lifetime, so the conversation cache now gets refreshed while the session is idle (up to
+  30 minutes) instead of expiring during subagent detours and returning as a full-cache
+  miss. Lifetime measured live: a cache hit was observed after a multi-minute subagent
+  detour, matching the Google implicit-caching norm (~5 minutes, refreshed on hit).
+  Warm refreshes count toward the session's daily request quota; Pi only warms when it
+  estimates ≥ $0.05 in avoided miss cost.
+
 ## [0.3.1] - 2026-11-19
 
 ### Fixed
