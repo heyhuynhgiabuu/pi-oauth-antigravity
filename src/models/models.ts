@@ -370,7 +370,7 @@ function claude55Models(family: Claude55Family): ProviderModelConfig[] {
  * Declaring it lets Pi's cacheWarming (default "idle") keep the conversation cache warm
  * while the user is away — the missing piece that made post-subagent turns miss.
  */
-const geminiPromptCache = { short: 300 };
+const geminiPromptCache = { short: 60 };
 
 export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
   {
