@@ -17,24 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   >25k tokens) measures prompt-cache miss rates of 1.4% under 60s inter-turn gaps, 15.9%
   at 60-180s and 61.5% at 300-600s (buckets, not a TTL — 60 is a proxy chosen to keep
   Pi's warming ahead of decay). Pi warms at `min(0.9·ttl, ttl−10s)`, so the shorter
-  declared lifetime raises the idle warm cadence to ~54s (≈5× more refresh requests;
-  ~33 warm requests per 30-minute idle window, counting toward the daily request
+  declared lifetime raises the idle warm cadence to ~50s (≈5.4× more refresh requests;
+  ~36 warm requests per 30-minute idle window, counting toward the daily request
   quota). Lane evidence is contradictory and unresolved: one live session recorded a
   cache hit after a multi-minute subagent detour, while this extension's probe lane has
   never reported `cachedContentTokenCount > 0`. If the lane never serves cached tokens,
   warms are pure quota spend.
 
-### Fixed
-
-- **Scrub punctuation collapse is scoped to the deleted name.** The space-before-
-  punctuation tidy pass ran globally and rewrote ` :` / ` ?` / ` .` sequences in system
-  text and tool descriptions that never contained the harness name (reviewer Major
-  finding). The collapse now happens only inside a match: punctuation directly after the
-  deleted span attaches to the previous word, a match at line start keeps the line
-  indentation, and text without the harness name is byte-identical (pinned by negative
-  tests: `x ? y : z`, JSON samples).
-
-## [0.3.2] - 2026-11-19
+## [0.3.2] - 2026-11-20
 
 ### Added
 
@@ -46,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it estimates ≥ $0.05 in avoided miss cost.
 
 ### Fixed
+
+- **Scrub punctuation collapse is scoped to the deleted name.** The space-before-
+  punctuation tidy pass ran globally and rewrote ` :` / ` ?` / ` .` sequences in system
+  text and tool descriptions that never contained the harness name (independent-review
+  Major finding, fixed before the first npm publish). The collapse now happens only
+  inside a match: punctuation directly after the deleted span attaches to the previous
+  word, a match at line start keeps the line indentation, and text without the harness
+  name is byte-identical (pinned by negative tests: `x ? y : z`, JSON samples).
 
 - **Agent-name scrub no longer flattens whitespace or mangles relative paths.** The
   previous scrub collapsed runs of spaces globally (flattening markdown indentation in

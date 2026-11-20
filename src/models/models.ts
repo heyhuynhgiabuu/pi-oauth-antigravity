@@ -367,14 +367,14 @@ function claude55Models(family: Claude55Family): ProviderModelConfig[] {
 /**
  * Implicit-cache lifetime ADOPTED FROM EXTERNAL TELEMETRY, not measured on this
  * extension's OAuth lane: the official-client dataset over 5,024 turn transitions
- * (INK-Q/agy-fast, Finding 6) shows prompt-cache miss rates of 1.4% under 60s
- * inter-turn gaps, 15.9% at 60-180s and 61.5% at 300s. Pi warms at
- * min(0.9·ttl, ttl−10s), so 60s raises the warm cadence to ~54s (≈5× the requests
- * that a 300s declaration would spend) — the trade for staying ahead of decay on
- * lanes that do serve cached tokens. Unverified here: this lane's probe has never
- * reported cachedContentTokenCount > 0, and one live session recorded a cache hit
- * after a multi-minute subagent detour — the two observations contradict each other
- * and remain unresolved.
+ * (INK-Q/agy-fast, Finding 6 — https://github.com/INK-Q/agy-fast, docs/ANALYSIS_REPORT.md)
+ * shows prompt-cache miss rates of 1.4% under 60s inter-turn gaps, 15.9% at 60-180s
+ * and 61.5% at 300-600s. Pi warms at min(0.9·ttl, ttl−10s): 60s → ~50s cadence
+ * (≈5.4× the requests a 300s declaration would spend) — the trade for staying ahead
+ * of decay on lanes that do serve cached tokens. Unverified here: this lane's probe
+ * has never reported cachedContentTokenCount > 0, and one live session recorded a
+ * cache hit after a multi-minute subagent detour — the two observations contradict
+ * each other and remain unresolved.
  */
 const geminiPromptCache = { short: 60 };
 
