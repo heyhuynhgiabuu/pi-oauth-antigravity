@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-20
+
+### Fixed
+
+- **Scrub punctuation collapse is scoped to the deleted name.** The v0.3.2 space-
+  before-punctuation pass ran globally and rewrote " :"/" ?"/" ." in system text and
+  tool descriptions that never contained the harness name (reviewer Major finding).
+  The collapse now happens only inside a match: punctuation directly after the deleted
+  span attaches to the previous word, a match at line start keeps the line indentation,
+  and text without the name is byte-identical (pinned by negative tests).
+
 ## [0.3.2] - 2026-11-19
 
 ### Added
