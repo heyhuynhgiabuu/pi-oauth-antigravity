@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent-name scrub no longer flattens whitespace or mangles relative paths.** The
+  previous scrub collapsed runs of spaces globally (flattening markdown indentation in
+  AGENTS.md context and tool descriptions on every request, match or not) and deleted the
+  harness name inside `pi/agent` relative paths. The scrub now consumes only the spaces
+  adjacent to a match, spares `pi/…` path forms, and leaves all other whitespace and
+  indentation verbatim.
+
 ### Added
 
 - **`promptCache` declared for all Gemini models (`short: 300`).** Pi's cache warming
@@ -67,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Previously, after the in-place retries ran out, the throttled runtime model (for example
   `gemini-4-hydrogen-medium`, "Resource has been exhausted") ended the request even though a
   fallback model (`gemini-4-carbon-medium`) was lined up. Plan quota ("Individual quota
-  reached") still fails fast.
+  reached") still fails fast. Worst case when every candidate is throttled is bounded but
+  slow: each candidate runs its own in-place retries before the next one is tried.
 - **Retry hints are also read from the 429 body, and exhausted-plan reasons fail fast**
   (mirrors CLIProxyAPI's 429 handling, issue #7565). The wait now comes from the
   `Retry-After` header, the body's `RetryInfo.retryDelay`, `ErrorInfo

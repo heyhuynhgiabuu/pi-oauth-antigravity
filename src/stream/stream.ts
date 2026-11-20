@@ -680,14 +680,17 @@ export function buildRequest(
  * instructions and tool descriptions — while message text is left untouched so file
  * paths and identifiers in the conversation survive.
  */
-const AGENT_NAME_PATTERN = /(?<![\w.-])pi(?![\w-])/gi;
+const AGENT_NAME_PATTERN = /[ \t]*(?<![\w./-])pi(?![\w/-])[ \t]*/gi;
 
 /** Exported for unit tests. */
 export function scrubAgentName(text: string): string {
+  // The match consumes one adjacent space on each side so single-spacing survives;
+  // whitespace beyond the match (markdown indentation, aligned code) is untouched.
+  // The punctuation pass only collapses a space run directly before punctuation —
+  // the remnant of a deleted word before a comma — never a global whitespace flatten.
   return text
-    .replace(AGENT_NAME_PATTERN, "")
-    .replace(/\s+,/g, ",")
-    .replace(/ {2,}/g, " ");
+    .replace(AGENT_NAME_PATTERN, " ")
+    .replace(/[ \t]+([,.;:!?])/g, "$1");
 }
 
 function scrubRequestAgentName(request: GeminiRequestBody): void {

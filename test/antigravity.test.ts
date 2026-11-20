@@ -405,10 +405,21 @@ test("agent-name scrub clears harness-authored text but keeps message text", asy
 	assert.equal(scrubAgentName("docs under /.pi/agent"), "docs under /.pi/agent");
 	assert.equal(scrubAgentName("the pi-oauth-antigravity repo"), "the pi-oauth-antigravity repo");
 	assert.equal(scrubAgentName("a pi-task subagent"), "a pi-task subagent");
+	assert.equal(scrubAgentName("relative pi/agent paths"), "relative pi/agent paths");
 	assert.equal(scrubAgentName("an api endpoint and pixel art"), "an api endpoint and pixel art");
+	// Whitespace and indentation outside a match must survive untouched (markdown
+	// nesting and indented code live in AGENTS.md context and tool descriptions).
+	assert.equal(
+		scrubAgentName("Run:\n  - nested item\n    code  indented"),
+		"Run:\n  - nested item\n    code  indented",
+	);
+	assert.equal(
+		scrubAgentName("Tools:\n  - read: read files (see pi docs)\n    continued  line"),
+		"Tools:\n  - read: read files (see docs)\n    continued  line",
+	);
 
 	const model = fakeModel("gemini-3.8-flash");
-	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined, NOAGY_COMPACT_PROMPT: undefined }, async () => {
 		const built = buildRequest(
 			model,
 			normalizeContext({
@@ -486,7 +497,7 @@ test("applyCompactSystemPrompt swaps the preamble and drops fingerprint-heavy se
 });
 
 test("ANTIGRAVITY_COMPACT_PROMPT resolves bundled, file, and missing-path sources", async () => {
-	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined, NOAGY_COMPACT_PROMPT: undefined }, async () => {
 		assert.equal(compactSystemPromptOverride(), undefined);
 	});
 	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: "1" }, async () => {
@@ -910,7 +921,7 @@ test("mapStopReason maps backend finish reasons", () => {
 });
 
 test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", async () => {
-	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined }, async () => {
+	await withEnvAsync({ ANTIGRAVITY_COMPACT_PROMPT: undefined, NOAGY_COMPACT_PROMPT: undefined }, async () => {
 	const model = fakeModel("gemini-3.7-flash");
 	const request = buildRequest(
 		model,
@@ -940,7 +951,7 @@ test("buildRequest sends plain schemas to Cloud Code Assist VALIDATED mode", asy
 	assert.equal(request.request.sessionId, "sess-42");
 	assert.match(request.requestId, /^agent\//);
 	// The agent-name scrub rewrites harness-authored system text (see the scrub test below).
-	assert.deepEqual(request.request.systemInstruction.parts, [{ text: "You are ." }]);
+	assert.deepEqual(request.request.systemInstruction.parts, [{ text: "You are." }]);
 	assert.equal(request.request.generationConfig?.thinkingConfig?.thinkingLevel, "HIGH");
 	assert.equal(request.request.generationConfig?.maxOutputTokens, 65536);
 	assert.equal(request.request.toolConfig?.functionCallingConfig.mode, "VALIDATED");
