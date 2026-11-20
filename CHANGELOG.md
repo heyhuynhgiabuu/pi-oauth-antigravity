@@ -7,14 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Agent-name scrub no longer flattens whitespace or mangles relative paths.** The
-  previous scrub collapsed runs of spaces globally (flattening markdown indentation in
-  AGENTS.md context and tool descriptions on every request, match or not) and deleted the
-  harness name inside `pi/agent` relative paths. The scrub now consumes only the spaces
-  adjacent to a match, spares `pi/…` path forms, and leaves all other whitespace and
-  indentation verbatim.
+## [0.3.2] - 2026-11-19
 
 ### Added
 
@@ -26,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detour, matching the Google implicit-caching norm (~5 minutes, refreshed on hit).
   Warm refreshes count toward the session's daily request quota; Pi only warms when it
   estimates ≥ $0.05 in avoided miss cost.
+
+### Fixed
+
+- **Agent-name scrub no longer flattens whitespace or mangles relative paths.** The
+  previous scrub collapsed runs of spaces globally (flattening markdown indentation in
+  AGENTS.md context and tool descriptions on every request, match or not) and deleted the
+  harness name inside `pi/agent` relative paths. The scrub now consumes only the spaces
+  adjacent to a match, spares `pi/…` path forms, and leaves all other whitespace and
+  indentation verbatim.
 
 ## [0.3.1] - 2026-11-19
 
