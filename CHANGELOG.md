@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-26
+
+### Fixed
+
+- **Emoji & astral-plane corruption in `sanitizeText`:** Replaced only unpaired UTF-16 surrogates instead of matching all surrogate code units, so valid emoji and astral-plane characters survive outbound messages and system prompts intact.
+- **Gemini `const` schema constraints:** Rewrote string/number `const` keywords to single-value `enum`s in `parametersJsonSchema` (matching Pi 1.6.1 `google-shared.js`), since Gemini ignores `const` in `parametersJsonSchema`.
+- **Nested & repeated `$defs` `$ref` resolution:** Scoped `visited` tracking per recursion path in `dereferenceSchema` so nested or repeated `$ref`s into `$defs` resolve completely before `stripMetaSchema` strips `$defs`.
+- **Truncated tool-call `stopReason`:** Only promote `StopReason.Stop` → `StopReason.ToolUse` when tool calls are present, preserving `StopReason.Length` on `MAX_TOKENS` so Pi handles truncated arguments cleanly.
+- **Pi 1.6.1 provider lifecycle hooks:** Invoked `options.onPayload` (supporting payload replacement) and `options.onResponse` in `streamAntigravity` so `before_provider_request` and `after_provider_response` extension hooks fire on the Antigravity lane.
+
+### Changed
+
+- Migrated tool schema definitions from `Type` (`@earendil-works/pi-ai` / TypeBox) to `@earendil-works/pi-schema` (`obj`, `oneOf`, `opt`, `str`, `Static`) and bumped Pi devDependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`) to `1.6.1`.
+
 ## [0.3.3] - 2026-11-20
 
 ### Changed

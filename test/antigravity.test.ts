@@ -72,7 +72,8 @@ import {
 	resolveImageSavePath,
 } from "../src/image/image.js";
 import { getCurrentSystemPrompt, getCurrentTools } from "../src/stream/transcript.js";
-import { createAssistantMessageEventStream, isRetryableAssistantError, normalizeContext, Type } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, isRetryableAssistantError, normalizeContext } from "@earendil-works/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
 import type { Api, AssistantMessage, Message, Model, Tool } from "@earendil-works/pi-ai";
 
 const testTempDir = mkdtempSync(join(tmpdir(), "pi-oauth-antigravity-test-"));
@@ -221,7 +222,7 @@ test("transcript adapter supports legacy contexts without a transcript subpath",
 	const tool: Tool = {
 		name: "lookup",
 		description: "Look up a value",
-		parameters: Type.Object({}),
+		parameters: obj({}),
 	};
 	const legacyMessages: Message[] = [{ role: "user", content: "hello", timestamp: 1 }];
 
@@ -247,12 +248,12 @@ test("transcript adapter replays normalized system deltas", () => {
 	const firstTool: Tool = {
 		name: "first",
 		description: "First tool",
-		parameters: Type.Object({}),
+		parameters: obj({}),
 	};
 	const secondTool: Tool = {
 		name: "second",
 		description: "Second tool",
-		parameters: Type.Object({}),
+		parameters: obj({}),
 	};
 	const messages: Message[] = [
 		{
@@ -2031,8 +2032,11 @@ test("buildRequest advances stepIndex and retains sessionId and trajectory acros
 	assert.equal(req2.request.labels!.last_step_index, "1");
 });
 
-test("sanitizeText replaces lone surrogates", () => {
+test("sanitizeText replaces lone surrogates while preserving valid emoji pairs", () => {
 	assert.equal(sanitizeText("a\uD800b"), "a\uFFFDb");
+	assert.equal(sanitizeText("a\uDC00b"), "a\uFFFDb");
+	assert.equal(sanitizeText("emoji \uD83D\uDE80 and \uD83C\uDF89"), "emoji \uD83D\uDE80 and \uD83C\uDF89");
+	assert.equal(sanitizeText("ok \uD83D\uDE80 bad \uD800 end"), "ok \uD83D\uDE80 bad \uFFFD end");
 	assert.equal(sanitizeText(undefined), "");
 });
 
@@ -2152,4 +2156,111 @@ test("image model and aspect ratio validation", () => {
 	assert.throws(() => assertSafeImageModel("gemini-3-pro-image; rm -rf /"), /Unsupported image model/);
 	assert.equal(assertSafeAspectRatio("16:9"), "16:9");
 	assert.throws(() => assertSafeAspectRatio("7:3"), /Unsupported aspect ratio/);
+});
+
+test("convertTools rewrites string/number const to single-value enum for Gemini parametersJsonSchema", () => {
+	const tools = convertTools([
+		{
+			name: "tagged",
+			description: "Tagged union",
+			parameters: {
+				type: "object",
+				properties: {
+					kind: { const: "v1" },
+					version: { const: 2 },
+					const: { type: "string", description: "Property literally named const" },
+				},
+			},
+		} as never,
+	]);
+	const schema = tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema as {
+		properties: Record<string, Record<string, unknown>>;
+	};
+	assert.deepEqual(schema.properties.kind, { enum: ["v1"] });
+	assert.deepEqual(schema.properties.version, { enum: [2] });
+	assert.deepEqual(schema.properties.const, { type: "string", description: "Property literally named const" });
+});
+
+test("convertTools resolves nested and repeated $defs $refs before stripping $defs", () => {
+	const tools = convertTools([
+		{
+			name: "nested_refs",
+			description: "Nested defs",
+			parameters: {
+				type: "object",
+				$defs: {
+					Leaf: { type: "string", minLength: 1 },
+					Node: {
+						type: "object",
+						properties: {
+							first: { $ref: "#/$defs/Leaf" },
+							second: { $ref: "#/$defs/Leaf" },
+						},
+					},
+				},
+				properties: {
+					a: { $ref: "#/$defs/Node" },
+					b: { $ref: "#/$defs/Node" },
+				},
+			},
+		} as never,
+	]);
+	const schema = tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema as Record<string, unknown>;
+	assert.equal("$defs" in schema, false);
+	assert.equal(JSON.stringify(schema).includes("$ref"), false);
+	const props = schema.properties as Record<string, { properties: Record<string, { type: string }> }>;
+	assert.equal(props.a.properties.first.type, "string");
+	assert.equal(props.b.properties.second.type, "string");
+});
+
+test("streamAntigravity invokes onPayload and onResponse and preserves stopReason length on truncated toolCall", async () => {
+	const seenPayloads: unknown[] = [];
+	const seenResponses: Array<{ status: number; headers: Record<string, string> }> = [];
+	let sentBody = "";
+	const sse =
+		`data: ${JSON.stringify({
+			response: {
+				candidates: [
+					{
+						content: {
+							parts: [{ functionCall: { name: "read", args: { path: "a.ts" }, id: "call_1" } }],
+						},
+						finishReason: "MAX_TOKENS",
+					},
+				],
+			},
+		})}\n\n`;
+
+	await withFetchStub(
+		(_url, _call, init) => {
+			sentBody = String(init?.body ?? "");
+			return new Response(sse, {
+				status: 200,
+				headers: { "content-type": "text/event-stream", "x-test-header": "ok" },
+			});
+		},
+		async () => {
+			const model = fakeModel("gemini-3.8-flash");
+			const context = normalizeContext({
+				messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+			} as never);
+			const stream = streamAntigravity(model, context, {
+				apiKey: JSON.stringify({ token: "tok", projectId: "proj-1" }),
+				onPayload(payload) {
+					seenPayloads.push(payload);
+					return { ...(payload as Record<string, unknown>), customHookMarker: true };
+				},
+				onResponse(response) {
+					seenResponses.push(response);
+				},
+			});
+			const finalMsg = await stream.result();
+			assert.equal(seenPayloads.length, 1);
+			assert.match(sentBody, /"customHookMarker":true/);
+			assert.equal(seenResponses.length, 1);
+			assert.equal(seenResponses[0]?.status, 200);
+			assert.equal(seenResponses[0]?.headers["x-test-header"], "ok");
+			assert.equal(finalMsg.stopReason, "length");
+		},
+	);
 });

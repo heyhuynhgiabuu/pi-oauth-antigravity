@@ -16,8 +16,12 @@ export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+// Replace only unpaired UTF-16 surrogates so valid emoji / astral-plane pairs survive intact.
+const UNPAIRED_SURROGATE_RE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 export function sanitizeText(text: unknown): string {
-  return String(text ?? "").replace(/[\uD800-\uDFFF]/g, "\uFFFD");
+  return String(text ?? "").replace(UNPAIRED_SURROGATE_RE, "\uFFFD");
 }
 
 export function escapeHtml(text: string): string {

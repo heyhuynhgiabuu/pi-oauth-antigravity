@@ -9,7 +9,7 @@
  * then run `npx tsc -p .pi/extensions/tsconfig.json --noEmit && npm run test:extensions`.
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { StringEnum, Type } from "@earendil-works/pi-ai";
+import { obj, oneOf, opt, str, type Static } from "@earendil-works/pi-schema";
 import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { getApiKey, loginAntigravity, refreshAntigravityToken } from "./auth/index.js";
 import { DEFAULT_ENDPOINT, endpointCandidates } from "./client/index.js";
@@ -187,6 +187,21 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  const generateImageParameters = obj({
+    prompt: str({ description: "Image description." }),
+    aspectRatio: opt(oneOf(IMAGE_ASPECT_RATIOS, { description: "Image aspect ratio." })),
+    model: opt(
+      str({
+        description: `Image model id. Default: ${DEFAULT_IMAGE_MODEL}.`,
+      }),
+    ),
+    path: opt(
+      str({
+        description: "Project-relative file or directory to save the image.",
+      }),
+    ),
+  });
+
   pi.registerTool({
     name: "generate_image",
     label: "Generate image",
@@ -196,21 +211,14 @@ export default function (pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use generate_image when the user asks to create, draw, or generate an image.",
     ],
-    parameters: Type.Object({
-      prompt: Type.String({ description: "Image description." }),
-      aspectRatio: Type.Optional(StringEnum(IMAGE_ASPECT_RATIOS)),
-      model: Type.Optional(
-        Type.String({
-          description: `Image model id. Default: ${DEFAULT_IMAGE_MODEL}.`,
-        }),
-      ),
-      path: Type.Optional(
-        Type.String({
-          description: "Project-relative file or directory to save the image.",
-        }),
-      ),
-    }),
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+    parameters: generateImageParameters,
+    async execute(
+      _toolCallId,
+      params: Static<typeof generateImageParameters>,
+      signal,
+      onUpdate,
+      ctx,
+    ) {
       const apiKey = await ctx.modelRegistry.getApiKeyForProvider("antigravity");
       if (!apiKey) {
         throw new Error("No Antigravity credentials. Run /login antigravity first.");

@@ -439,29 +439,33 @@ function dereferenceSchema(
   if (visited.has(s)) return s;
   visited.add(s);
 
-  const defs: Record<string, unknown> = { ...rootDefs };
-  if (isRecord(s.$defs)) Object.assign(defs, s.$defs);
-  if (isRecord(s.definitions)) Object.assign(defs, s.definitions);
+  try {
+    const defs: Record<string, unknown> = { ...rootDefs };
+    if (isRecord(s.$defs)) Object.assign(defs, s.$defs);
+    if (isRecord(s.definitions)) Object.assign(defs, s.definitions);
 
-  if (typeof s.$ref === "string") {
-    const ref = s.$ref;
-    const match = ref.match(/^#\/(?:\$defs|definitions)\/(.+)$/);
-    if (match && match[1] && defs[match[1]] !== undefined) {
-      const resolved = dereferenceSchema(defs[match[1]], defs, visited);
-      if (isRecord(resolved)) {
-        const { $ref: _, ...rest } = s;
-        const restCleaned = dereferenceSchema(rest, defs, visited);
-        return isRecord(restCleaned) ? { ...resolved, ...restCleaned } : resolved;
+    if (typeof s.$ref === "string") {
+      const ref = s.$ref;
+      const match = ref.match(/^#\/(?:\$defs|definitions)\/(.+)$/);
+      if (match && match[1] && defs[match[1]] !== undefined) {
+        const resolved = dereferenceSchema(defs[match[1]], defs, visited);
+        if (isRecord(resolved)) {
+          const { $ref: _, ...rest } = s;
+          const restCleaned = dereferenceSchema(rest, defs, visited);
+          return isRecord(restCleaned) ? { ...resolved, ...restCleaned } : resolved;
+        }
+        return resolved;
       }
-      return resolved;
     }
-  }
 
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(s)) {
-    out[key] = dereferenceSchema(value, defs, visited);
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(s)) {
+      out[key] = dereferenceSchema(value, defs, visited);
+    }
+    return out;
+  } finally {
+    visited.delete(s);
   }
-  return out;
 }
 
 function ensureRootObjectSchema(schema: unknown): Record<string, unknown> {
@@ -553,6 +557,54 @@ function normalizeCustomToolSchema(schema: unknown): unknown {
   return out;
 }
 
+const JSON_SCHEMA_SUBSCHEMAS = new Set([
+  "items",
+  "additionalItems",
+  "additionalProperties",
+  "contains",
+  "propertyNames",
+  "not",
+  "if",
+  "then",
+  "else",
+  "anyOf",
+  "oneOf",
+  "allOf",
+  "prefixItems",
+]);
+
+const JSON_SCHEMA_NAME_MAPS = new Set([
+  "properties",
+  "patternProperties",
+  "dependentSchemas",
+  "$defs",
+  "definitions",
+]);
+
+/**
+ * Rewrite string and number `const` values to single-value `enum`s.
+ * Gemini ignores `const` in `parametersJsonSchema` but honors `enum`.
+ */
+function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
+  if (Array.isArray(schema)) return schema.map((item) => rewriteConstAsEnum(item));
+  if (typeof schema !== "object" || schema === null) return schema;
+  const result = Object.fromEntries(
+    Object.entries(schema as Record<string, unknown>).map(([key, value]) => {
+      if (isNameMap || JSON_SCHEMA_SUBSCHEMAS.has(key)) return [key, rewriteConstAsEnum(value)];
+      if (JSON_SCHEMA_NAME_MAPS.has(key)) return [key, rewriteConstAsEnum(value, true)];
+      return [key, value];
+    }),
+  );
+  if (!isNameMap && "const" in result && result.enum === undefined) {
+    const value = result.const;
+    if (typeof value === "string" || typeof value === "number") {
+      delete result.const;
+      result.enum = [value];
+    }
+  }
+  return result;
+}
+
 /**
  * Gemini accepts JSON Schema through parametersJsonSchema. Claude and GPT-OSS
  * use Cloud Code Assist's custom-tool bridge, which requires a compatible
@@ -579,7 +631,7 @@ export function convertTools(
           description: tool.description,
           ...(useLegacyParameters
             ? { parameters: normalizeCustomToolSchema(schema) }
-            : { parametersJsonSchema: schema }),
+            : { parametersJsonSchema: rewriteConstAsEnum(schema) }),
         };
       }),
     },
@@ -1139,9 +1191,11 @@ export async function streamResponse(
 
       if (candidate?.finishReason) {
         output.rawStopReason = candidate.finishReason;
-        output.stopReason = blocks.some((b) => b.type === "toolCall")
-          ? StopReason.ToolUse
-          : mapStopReason(candidate.finishReason);
+        const mapped = mapStopReason(candidate.finishReason);
+        output.stopReason =
+          mapped === StopReason.Stop && blocks.some((b) => b.type === "toolCall")
+            ? StopReason.ToolUse
+            : mapped;
       }
 
       if (responseData.responseId) {
@@ -1247,7 +1301,19 @@ export function streamAntigravity(
         for (let candIdx = 0; candIdx < runtimeCandidates.length; candIdx++) {
           runtimeModel = runtimeCandidates[candIdx]!;
           setLastResolvedRuntimeModel(runtimeModel);
-          const body = JSON.stringify(buildRequest(model, context, projectId, opts, runtimeModel, sessionState));
+          let payload: unknown = buildRequest(
+            model,
+            context,
+            projectId,
+            opts,
+            runtimeModel,
+            sessionState,
+          );
+          if (opts.onPayload) {
+            const replaced = await opts.onPayload(payload, model);
+            if (replaced !== undefined) payload = replaced;
+          }
+          const body = JSON.stringify(payload);
 
           for (const endpoint of endpointCandidates(sessionState.lastGoodEndpoint)) {
             setLastEndpoint(endpoint);
@@ -1263,6 +1329,13 @@ export function streamAntigravity(
                 },
               );
               setLastStatus(response.status);
+              if (opts.onResponse) {
+                const headers: Record<string, string> = {};
+                response.headers.forEach((value, key) => {
+                  headers[key.toLowerCase()] = value;
+                });
+                await opts.onResponse({ status: response.status, headers }, model);
+              }
               if (response.ok) {
                 sessionState.lastGoodEndpoint = endpoint;
                 persistAntigravitySessions();
