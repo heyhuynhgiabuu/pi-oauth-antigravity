@@ -1832,11 +1832,40 @@ test("jsonOrTextError prefers the JSON error message", () => {
 	assert.equal(jsonOrTextError("plain failure"), "plain failure");
 });
 
-test("antigravityHeaders carry bearer auth and client metadata", () => {
-	const headers = antigravityHeaders("tok");
-	assert.equal(headers.Authorization, "Bearer tok");
-	assert.equal(headers.Accept, "text/event-stream");
-	assert.ok(headers["Client-Metadata"].includes("ANTIGRAVITY"));
+test("antigravityHeaders map the host platform and preserve overrides", async () => {
+	await withEnvAsync({
+		ANTIGRAVITY_USER_AGENT: undefined,
+		NOAGY_USER_AGENT: undefined,
+		ANTIGRAVITY_HUB_OS: undefined,
+		NOAGY_HUB_OS: undefined,
+		ANTIGRAVITY_HUB_ARCH: undefined,
+		NOAGY_HUB_ARCH: undefined,
+	}, async () => {
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+		const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
+		try {
+			for (const [platform, arch, expectedOs, expectedArch] of [
+				["win32", "x64", "windows", "amd64"],
+				["darwin", "arm64", "darwin", "arm64"],
+				["linux", "arm64", "linux", "arm64"],
+			]) {
+				Object.defineProperty(process, "platform", { ...originalPlatform, value: platform });
+				Object.defineProperty(process, "arch", { ...originalArch, value: arch });
+				const headers = antigravityHeaders("tok");
+				assert.equal(headers.Authorization, "Bearer tok");
+				assert.equal(headers.Accept, "text/event-stream");
+				assert.ok(headers["Client-Metadata"].includes("ANTIGRAVITY"));
+				assert.ok(headers["User-Agent"].includes(`os_type=${expectedOs}; arch=${expectedArch};`));
+			}
+
+			process.env.ANTIGRAVITY_HUB_OS = "custom-os";
+			process.env.ANTIGRAVITY_HUB_ARCH = "custom-arch";
+			assert.ok(antigravityHeaders("tok")["User-Agent"].includes("os_type=custom-os; arch=custom-arch;"));
+		} finally {
+			Object.defineProperty(process, "platform", originalPlatform);
+			Object.defineProperty(process, "arch", originalArch);
+		}
+	});
 });
 
 test("antigravityHeaders generate a fresh trace and request id per call", () => {
