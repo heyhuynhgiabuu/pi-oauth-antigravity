@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-26
+
+### Fixed
+
+- **Per-runtime-model throttle cooldown:** Remember transient 429 throttles per runtime model in memory (60s default, honoring server `Retry-After` up to 10 minutes) so follow-up tool-call requests in the same turn stay on the fallback runtime model instead of repeatedly retrying and backing off on the throttled primary.
+
+### Added
+
+- **Fallback observability in `/antigravity.doctor`:** Record `fallbackReason` in request diagnostics and surface `lastFallbackReason` in `/antigravity.doctor` whenever a fallback runtime model served the request.
+
 ## [0.3.4] - 2026-11-26
 
 ### Fixed

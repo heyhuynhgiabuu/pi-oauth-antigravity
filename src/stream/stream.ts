@@ -33,6 +33,7 @@ import {
   runWithDiagnostics,
   setLastEndpoint,
   setLastError,
+  setLastFallbackReason,
   setLastLatencyMs,
   setLastProjectId,
   setLastResolvedRuntimeModel,
@@ -85,6 +86,28 @@ import {
 import { antigravityFetch } from "../utils/http.js";
 
 export { ANTIGRAVITY_API };
+
+const THROTTLE_COOLDOWN_DEFAULT_MS = 60_000;
+const THROTTLE_COOLDOWN_MAX_MS = 10 * 60_000;
+const throttledRuntimeUntil = new Map<string, number>();
+
+export function getRuntimeThrottleCooldownRemainingMs(
+  runtimeModel: string,
+  now = Date.now(),
+): number {
+  const until = throttledRuntimeUntil.get(runtimeModel);
+  if (until === undefined) return 0;
+  const remaining = until - now;
+  if (remaining <= 0) {
+    throttledRuntimeUntil.delete(runtimeModel);
+    return 0;
+  }
+  return remaining;
+}
+
+export function clearRuntimeThrottleCooldowns(): void {
+  throttledRuntimeUntil.clear();
+}
 
 const ANTIGRAVITY_SYSTEM_INSTRUCTION =
   "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. " +
@@ -1276,8 +1299,14 @@ export function streamAntigravity(
 
       const runtimeCandidates = [initialRuntimeModel];
       const fallback = getFallbackRuntimeModel(initialRuntimeModel, effort);
+      let initialCooldownMs = 0;
       if (fallback && fallback !== initialRuntimeModel) {
-        runtimeCandidates.push(fallback);
+        initialCooldownMs = getRuntimeThrottleCooldownRemainingMs(initialRuntimeModel);
+        if (initialCooldownMs > 0) {
+          runtimeCandidates.unshift(fallback);
+        } else {
+          runtimeCandidates.push(fallback);
+        }
       }
 
       const isClaudeReasoning = model.id.startsWith("claude-") && model.reasoning;
@@ -1301,6 +1330,7 @@ export function streamAntigravity(
         for (let candIdx = 0; candIdx < runtimeCandidates.length; candIdx++) {
           runtimeModel = runtimeCandidates[candIdx]!;
           setLastResolvedRuntimeModel(runtimeModel);
+          let lastRetryAfterSeconds: number | undefined;
           let payload: unknown = buildRequest(
             model,
             context,
@@ -1337,6 +1367,14 @@ export function streamAntigravity(
                 await opts.onResponse({ status: response.status, headers }, model);
               }
               if (response.ok) {
+                throttledRuntimeUntil.delete(runtimeModel);
+                if (runtimeModel !== initialRuntimeModel) {
+                  setLastFallbackReason(
+                    initialCooldownMs > 0
+                      ? `primary ${initialRuntimeModel} throttled (cooldown ${Math.ceil(initialCooldownMs / 1000)}s)`
+                      : `primary ${initialRuntimeModel} failed; switched to ${runtimeModel}`,
+                  );
+                }
                 sessionState.lastGoodEndpoint = endpoint;
                 persistAntigravitySessions();
                 break;
@@ -1351,6 +1389,7 @@ export function streamAntigravity(
               const retryAfterSeconds =
                 parseRetryAfterSeconds(response.headers.get("retry-after")) ??
                 parseRetryAfterFromBody(lastText);
+              if (retryAfterSeconds !== undefined) lastRetryAfterSeconds = retryAfterSeconds;
               const retryable =
                 response.status === 429 &&
                 throttleAttempt < THROTTLE_MAX_RETRIES &&
@@ -1388,6 +1427,13 @@ export function streamAntigravity(
             !isPlanQuotaError(response.status, lastText) &&
             candIdx + 1 < runtimeCandidates.length
           ) {
+            const cooldownMs = Math.min(
+              THROTTLE_COOLDOWN_MAX_MS,
+              lastRetryAfterSeconds !== undefined && lastRetryAfterSeconds > 0
+                ? Math.round(lastRetryAfterSeconds * 1000)
+                : THROTTLE_COOLDOWN_DEFAULT_MS,
+            );
+            throttledRuntimeUntil.set(runtimeModel, Date.now() + cooldownMs);
             continue;
           }
           if (response?.status === 404) {

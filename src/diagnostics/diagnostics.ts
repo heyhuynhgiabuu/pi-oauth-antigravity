@@ -7,6 +7,7 @@ export type DiagnosticsSnapshot = {
   error?: string;
   projectId?: string;
   resolvedRuntimeModel?: string;
+  fallbackReason?: string;
   availableModels?: string;
   matchedModelDebug?: string;
   latencyMs?: number;
@@ -79,6 +80,10 @@ export function setLastProjectId(projectId: string | undefined): void {
 }
 export function setLastResolvedRuntimeModel(model: string | undefined): void {
   currentBag().resolvedRuntimeModel = model;
+}
+export function setLastFallbackReason(reason: string | undefined): void {
+  currentBag().fallbackReason =
+    reason === undefined ? undefined : redactSecrets(reason).slice(0, 400);
 }
 export function setLastAvailableModels(models: string | undefined): void {
   currentBag().availableModels = models;

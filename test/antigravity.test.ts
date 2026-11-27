@@ -15,10 +15,12 @@ import {
 import {
 	ANTIGRAVITY_API,
 	buildRequest,
+	clearRuntimeThrottleCooldowns,
 	convertMessages,
 	convertTools,
 	friendlyAntigravityError,
 	extractAccountValidation,
+	getRuntimeThrottleCooldownRemainingMs,
 	isPlanQuotaError,
 	mapStopReason,
 	parseGoogleDurationSeconds,
@@ -28,6 +30,7 @@ import {
 	streamAntigravity,
 	streamResponse,
 } from "../src/stream/stream.js";
+import { getLastDiagnostics } from "../src/diagnostics/diagnostics.js";
 import {
 	DEFAULT_ENDPOINT,
 	ENDPOINT_FALLBACKS,
@@ -1283,47 +1286,78 @@ test("a long Retry-After cooldown burns no retry attempts", async () => {
 });
 
 test("a throttled Gemini 4 Hydrogen request is served by the Carbon fallback", async () => {
+	clearRuntimeThrottleCooldowns();
 	const sessionsFile = join(tmpdir(), `ag-throttle-fallback-${Date.now()}.json`);
 	const requestedModels: string[] = [];
-	await withEnvAsync(
-		{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
-		async () => {
-			await withFetchStub(
-				(_url, _call, init) => {
-					const runtimeModel = (JSON.parse(String(init?.body)) as { model: string }).model;
-					requestedModels.push(runtimeModel);
-					return runtimeModel === "gemini-4-hydrogen-medium"
-						? errorResponse(429, "Resource has been exhausted (e.g. check quota).")
-						: new Response(STREAM_OK_SSE, {
-								status: 200,
-								headers: { "content-type": "text/event-stream" },
-							});
-				},
-				async () => {
-					const stream = streamAntigravity(
-						fakeModel("gemini-4-hydrogen"),
-						normalizeContext({
-							systemPrompt: "You are pi.",
-							messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-						} as never),
-						{
-							apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
-							sessionId: "-4747474747",
-							reasoning: "medium",
-						} as never,
-					);
-					const message = (await stream.result()) as { stopReason: string };
-					assert.notEqual(message.stopReason, "error");
-					assert.deepEqual(requestedModels, [
-						"gemini-4-hydrogen-medium",
-						"gemini-4-hydrogen-medium",
-						"gemini-4-hydrogen-medium",
-						"gemini-4-carbon-medium",
-					]);
-				},
-			);
-		},
-	);
+	try {
+		await withEnvAsync(
+			{ ANTIGRAVITY_SESSIONS_FILE: sessionsFile, ANTIGRAVITY_THROTTLE_BASE_DELAY_MS: "0" },
+			async () => {
+				await withFetchStub(
+					(_url, _call, init) => {
+						const runtimeModel = (JSON.parse(String(init?.body)) as { model: string }).model;
+						requestedModels.push(runtimeModel);
+						return runtimeModel === "gemini-4-hydrogen-medium"
+							? errorResponse(429, "Resource has been exhausted (e.g. check quota).")
+							: new Response(STREAM_OK_SSE, {
+									status: 200,
+									headers: { "content-type": "text/event-stream" },
+								});
+					},
+					async () => {
+						const stream = streamAntigravity(
+							fakeModel("gemini-4-hydrogen"),
+							normalizeContext({
+								systemPrompt: "You are pi.",
+								messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+							} as never),
+							{
+								apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+								sessionId: "-4747474747",
+								reasoning: "medium",
+							} as never,
+						);
+						const message = (await stream.result()) as { stopReason: string };
+						assert.notEqual(message.stopReason, "error");
+						assert.deepEqual(requestedModels, [
+							"gemini-4-hydrogen-medium",
+							"gemini-4-hydrogen-medium",
+							"gemini-4-hydrogen-medium",
+							"gemini-4-carbon-medium",
+						]);
+						assert.ok(
+							getRuntimeThrottleCooldownRemainingMs("gemini-4-hydrogen-medium") > 0,
+							"throttled primary should enter cooldown",
+						);
+						await new Promise((r) => setImmediate(r));
+						assert.match(getLastDiagnostics().fallbackReason ?? "", /gemini-4-hydrogen-medium/);
+
+						// Next request in the same turn/cooldown window goes straight to Carbon (no ping-pong).
+						requestedModels.length = 0;
+						const second = streamAntigravity(
+							fakeModel("gemini-4-hydrogen"),
+							normalizeContext({
+								systemPrompt: "You are pi.",
+								messages: [{ role: "user", content: [{ type: "text", text: "follow-up" }] }],
+							} as never),
+							{
+								apiKey: JSON.stringify({ token: "token-1", projectId: "project-1" }),
+								sessionId: "-4747474747",
+								reasoning: "medium",
+							} as never,
+						);
+						const secondMsg = (await second.result()) as { stopReason: string };
+						assert.notEqual(secondMsg.stopReason, "error");
+						assert.deepEqual(requestedModels, ["gemini-4-carbon-medium"]);
+						await new Promise((r) => setImmediate(r));
+						assert.match(getLastDiagnostics().fallbackReason ?? "", /cooldown/);
+					},
+				);
+			},
+		);
+	} finally {
+		clearRuntimeThrottleCooldowns();
+	}
 });
 
 test("parseGoogleDurationSeconds parses Google RPC durations", () => {

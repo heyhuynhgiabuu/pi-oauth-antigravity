@@ -131,6 +131,7 @@ export default function (pi: ExtensionAPI): void {
       const lines = [
         `provider=${PROVIDER_ID}`,
         `lastResolvedRuntimeModel=${d.resolvedRuntimeModel || "none"}`,
+        ...(d.fallbackReason ? [`lastFallbackReason=${d.fallbackReason}`] : []),
         `availableModels=${d.availableModels || "none"}`,
         `matchedModel=${d.matchedModelDebug || "none"}`,
         `lastEndpoint=${d.endpoint || "none"}`,
