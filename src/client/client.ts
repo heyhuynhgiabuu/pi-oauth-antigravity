@@ -74,8 +74,8 @@ const DEFAULT_ANTIGRAVITY_CL = "963137146";
 function defaultUserAgent(): string {
   const version = antigravityEnv("HUB_VERSION") || DEFAULT_ANTIGRAVITY_VERSION;
   const cl = antigravityEnv("HUB_CL") || DEFAULT_ANTIGRAVITY_CL;
-  const os = antigravityEnv("HUB_OS") || "darwin";
-  const arch = antigravityEnv("HUB_ARCH") || "arm64";
+  const os = antigravityEnv("HUB_OS") || process.platform.replace("win32", "windows");
+  const arch = antigravityEnv("HUB_ARCH") || process.arch.replace("x64", "amd64");
   return `antigravity/hub/${version} (aidev_client; os_type=${os}; arch=${arch}; cl=${cl})`;
 }
 
